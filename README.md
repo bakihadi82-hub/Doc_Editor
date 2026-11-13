@@ -1,6 +1,6 @@
-# PdfStudio
+# Document Studio (PdfStudio)
 
-A native Windows desktop PDF reader and editor built with **.NET 10** (`net10.0-windows`), **Avalonia UI**, **SkiaSharp**, direct **PDFium** `[LibraryImport]` P/Invoke rendering, and **PdfSharpCore** structural editing.
+A fast, native Windows multi-format document studio built with **.NET 10** (`net10.0-windows`), **Avalonia UI**, **SkiaSharp**, direct **PDFium** `[LibraryImport]` P/Invoke rendering, **PdfSharpCore**, **DocumentFormat.OpenXml**, and **AvaloniaEdit**—supporting **PDF** (`.pdf`), **Spreadsheets** (`.xlsx`, `.csv`, `.tsv`), **Word Documents** (`.docx`), **Markdown, Code & Plain Text** (`.md`, `.txt`, `.json`, `.xml`, `.log`), and **Images** (`.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`) in a unified browser-style tab workspace.
 
 ---
 
