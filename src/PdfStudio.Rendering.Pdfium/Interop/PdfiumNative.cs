@@ -111,6 +111,28 @@ internal static partial class PdfiumNative
         out double top);
 
     [LibraryImport(LibraryName)]
+    public static partial uint FPDFText_GetUnicode(nint textPage, int index);
+
+    [LibraryImport(LibraryName)]
+    public static partial int FPDFText_GetCharIndexAtPos(
+        nint textPage,
+        double x,
+        double y,
+        double xTolerance,
+        double yTolerance);
+
+    [LibraryImport(LibraryName)]
+    public static partial double FPDFText_GetFontSize(nint textPage, int index);
+
+    [LibraryImport(LibraryName)]
+    public static partial uint FPDFText_GetFontInfo(
+        nint textPage,
+        int index,
+        nint buffer,
+        uint buflen,
+        out int flags);
+
+    [LibraryImport(LibraryName)]
     public static partial nint FPDFText_FindStart(nint textPage, nint findWhatUtf16, uint flags, int startIndex);
 
     [LibraryImport(LibraryName)]

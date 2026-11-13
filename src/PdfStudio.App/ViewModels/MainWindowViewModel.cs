@@ -12,6 +12,7 @@ using PdfStudio.App.Themes;
 using PdfStudio.Core.Annotations;
 using PdfStudio.Core.Documents;
 using PdfStudio.Core.Editing;
+using PdfStudio.Core.Formats;
 using PdfStudio.Core.Forms;
 using PdfStudio.Core.Rendering;
 using PdfStudio.Editing.PdfSharp;
@@ -215,7 +216,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public string PendingCloseTabTitle => PendingCloseTab?.Title ?? DocumentTitle;
 
     public IReadOnlyList<PdfTextMatch> SearchMatches => _searchMatches;
-    public IReadOnlyList<PdfAnnotation> Annotations => ActiveTab?.EditPlan.Annotations ?? (IReadOnlyList<PdfAnnotation>)[];
+    public IReadOnlyList<PdfAnnotation> Annotations => ActivePdfTab?.EditPlan.Annotations ?? (IReadOnlyList<PdfAnnotation>)[];
     public PdfTextMatch? ActiveSearchMatch =>
         ActiveSearchMatchIndex >= 0 && ActiveSearchMatchIndex < _searchMatches.Count
             ? _searchMatches[ActiveSearchMatchIndex]
@@ -232,6 +233,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public bool IsTextTool => ActiveTool == PdfToolKind.Text;
     public bool IsNoteTool => ActiveTool == PdfToolKind.Note;
     public bool IsRedactTool => ActiveTool == PdfToolKind.Redact;
+    public bool IsEditTextTool => ActiveTool == PdfToolKind.EditText;
     public bool IsAnnotationToolActive => ActiveTool is PdfToolKind.Highlight or PdfToolKind.Underline or PdfToolKind.Draw or PdfToolKind.Text or PdfToolKind.Note;
     public bool IsStrokeToolActive => ActiveTool is PdfToolKind.Highlight or PdfToolKind.Underline or PdfToolKind.Draw;
     public bool IsTextOrNoteToolActive => ActiveTool is PdfToolKind.Text or PdfToolKind.Note;
@@ -249,7 +251,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public bool IsFontSize20 => Math.Abs(ActiveFontSizePt - 20.0) < 0.1;
     public bool HasSelectedAnnotation => SelectedAnnotation is not null;
     public bool HasSelectedEditableText => SelectedAnnotation is { Kind: AnnotationKind.TextBox or AnnotationKind.StickyNote };
-    public int PendingRedactionCount => ActiveTab?.EditPlan.Annotations.Count(a => a.Kind == AnnotationKind.Redaction) ?? 0;
+    public int PendingRedactionCount => ActivePdfTab?.EditPlan.Annotations.Count(a => a.Kind == AnnotationKind.Redaction) ?? 0;
     public bool HasPendingRedactions => PendingRedactionCount > 0;
     public bool HasFormFields => FormFields.Count > 0;
 
@@ -260,8 +262,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ? $"{ActiveSearchMatchIndex + 1} of {TotalSearchMatches}"
         : "0 of 0";
 
-    public bool CanUndo => ActiveTab?.UndoStack.Count > 0;
-    public bool CanRedo => ActiveTab?.RedoStack.Count > 0;
+    public bool CanUndo => ActiveTab?.CanUndo ?? false;
+    public bool CanRedo => ActiveTab?.CanRedo ?? false;
 
     public event Func<Task<string?>>? RequestOpenFilePath;
     public event Func<Task<IReadOnlyList<string>?>>? RequestOpenMultipleFilePaths;
@@ -336,9 +338,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsTextTool));
         OnPropertyChanged(nameof(IsNoteTool));
         OnPropertyChanged(nameof(IsRedactTool));
+        OnPropertyChanged(nameof(IsEditTextTool));
         OnPropertyChanged(nameof(IsAnnotationToolActive));
         OnPropertyChanged(nameof(IsStrokeToolActive));
         OnPropertyChanged(nameof(IsTextOrNoteToolActive));
+        if (value != PdfToolKind.Select)
+        {
+            ClearPdfTextSelection();
+        }
+        if (value != PdfToolKind.EditText)
+        {
+            CancelInlinePdfTextEdit();
+        }
+        RequestInvalidateCanvas?.Invoke();
     }
 
     partial void OnActiveToolColorHexChanged(string value)
@@ -384,9 +396,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             SelectedAnnotation.TextContent = value;
             HasUnsavedChanges = true;
-            if (ActiveTab is not null)
+            if (ActivePdfTab is not null)
             {
-                ActiveTab.EditPlan.HasChanges = true;
+                ActivePdfTab.EditPlan.HasChanges = true;
             }
             RequestInvalidateCanvas?.Invoke();
         }
@@ -397,11 +409,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(PageCounterText));
         UpdateActivePageMetadata();
         UpdateThumbnailSelection();
-        if (ActiveTab is not null)
+        if (ActivePdfTab is not null)
         {
-            ActiveTab.CurrentPage = value;
+            ActivePdfTab.CurrentPage = value;
+            ActivePdfTab.UpdateMetadataBadges();
         }
-        if (!_suppressPageScrollEvent && HasOpenDocument)
+        if (!_suppressPageScrollEvent && HasOpenDocument && IsPdfWorkspaceActive)
         {
             RequestScrollToPage?.Invoke(Math.Clamp(value - 1, 0, Math.Max(0, Pages.Count - 1)));
         }
@@ -412,13 +425,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     partial void OnZoomPercentChanged(int value)
     {
         OnPropertyChanged(nameof(ZoomText));
-        if (ActiveTab is not null)
+        if (ActivePdfTab is not null)
         {
-            ActiveTab.ZoomPercent = value;
+            ActivePdfTab.ZoomPercent = value;
+            ActivePdfTab.UpdateMetadataBadges();
         }
         if (!_suppressZoomSync)
         {
-            RequestTargetZoom?.Invoke(value);
+            if (ActiveImageTab is not null)
+            {
+                ActiveImageTab.ZoomPercent = value;
+            }
+            else
+            {
+                RequestTargetZoom?.Invoke(value);
+            }
         }
     }
 
@@ -778,6 +799,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private void SetRedactTool() => ActiveTool = PdfToolKind.Redact;
 
     [RelayCommand]
+    private void SetEditTextTool() => ActiveTool = PdfToolKind.EditText;
+
+    [RelayCommand]
     private void ZoomIn()
     {
         int next = ZoomStops.FirstOrDefault(z => z > ZoomPercent);
@@ -853,6 +877,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void HandleEscape()
     {
+        if (IsAllTabsDropdownOpen)
+        {
+            IsAllTabsDropdownOpen = false;
+            return;
+        }
+        if (IsNewTabMenuOpen)
+        {
+            IsNewTabMenuOpen = false;
+            return;
+        }
+        if (IsInlinePdfTextEditOpen)
+        {
+            CancelInlinePdfTextEdit();
+            return;
+        }
+        if (IsPdfSelectionPillVisible)
+        {
+            ClearPdfTextSelection();
+            return;
+        }
         if (IsPageJumpEditing)
         {
             IsPageJumpEditing = false;
@@ -972,6 +1016,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void NextSearchMatch()
     {
+        if (ActiveSpreadsheetTab is { } sheet)
+        {
+            sheet.NextSearchMatch();
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+        if (ActiveRichDocTab is { } doc)
+        {
+            doc.NextSearchMatch();
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+        if (ActiveMarkdownTab is { } md)
+        {
+            md.NextSearchMatch();
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+
         if (_searchMatches.Count == 0) return;
         ActiveSearchMatchIndex = (ActiveSearchMatchIndex + 1) % _searchMatches.Count;
         FocusActiveSearchMatch();
@@ -980,6 +1043,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void PreviousSearchMatch()
     {
+        if (ActiveSpreadsheetTab is { } sheet)
+        {
+            sheet.PreviousSearchMatch();
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+        if (ActiveRichDocTab is { } doc)
+        {
+            doc.PreviousSearchMatch();
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+        if (ActiveMarkdownTab is { } md)
+        {
+            md.PreviousSearchMatch();
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+
         if (_searchMatches.Count == 0) return;
         ActiveSearchMatchIndex = (ActiveSearchMatchIndex - 1 + _searchMatches.Count) % _searchMatches.Count;
         FocusActiveSearchMatch();
@@ -987,6 +1069,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task RunSearchAsync(string query)
     {
+        if (ActiveSpreadsheetTab is { } sheet)
+        {
+            sheet.RunSearch(query);
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+        if (ActiveRichDocTab is { } doc)
+        {
+            doc.RunSearch(query);
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+        if (ActiveMarkdownTab is { } md)
+        {
+            md.RunSearch(query);
+            UpdateNonPdfSearchStatus();
+            return;
+        }
+
         _searchCts?.Cancel();
         _searchCts?.Dispose();
         _searchCts = null;
@@ -995,7 +1096,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ActiveSearchMatchIndex = -1;
         TotalSearchMatches = 0;
 
-        if (!HasOpenDocument || string.IsNullOrWhiteSpace(query))
+        if (!HasOpenDocument || !IsPdfWorkspaceActive || string.IsNullOrWhiteSpace(query))
         {
             RequestInvalidateCanvas?.Invoke();
             return;
@@ -1070,6 +1171,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _searchMatches.Clear();
         ActiveSearchMatchIndex = -1;
         TotalSearchMatches = 0;
+        ActiveSpreadsheetTab?.ClearSearch();
+        ActiveRichDocTab?.ClearSearch();
+        ActiveMarkdownTab?.ClearSearch();
         RequestInvalidateCanvas?.Invoke();
     }
 
@@ -1077,11 +1181,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void AddAnnotation(PdfAnnotation annotation)
     {
-        if (!HasOpenDocument || ActiveTab is null) return;
+        if (!HasOpenDocument || ActivePdfTab is null) return;
 
-        PushUndoSnapshot(ActiveTab);
-        ActiveTab.EditPlan.Annotations.Add(annotation);
-        ActiveTab.EditPlan.HasChanges = true;
+        PushUndoSnapshot(ActivePdfTab);
+        ActivePdfTab.EditPlan.Annotations.Add(annotation);
+        ActivePdfTab.EditPlan.HasChanges = true;
         HasUnsavedChanges = true;
         SelectedAnnotation = annotation;
         NotifyAnnotationStateChanged();
@@ -1090,16 +1194,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void BeginAnnotationTransformSnapshot()
     {
-        if (HasOpenDocument && ActiveTab is not null)
+        if (HasOpenDocument && ActivePdfTab is not null)
         {
-            PushUndoSnapshot(ActiveTab);
+            PushUndoSnapshot(ActivePdfTab);
         }
     }
 
     public void CommitAnnotationTransform()
     {
-        if (ActiveTab is null) return;
-        ActiveTab.EditPlan.HasChanges = true;
+        if (ActivePdfTab is null) return;
+        ActivePdfTab.EditPlan.HasChanges = true;
         HasUnsavedChanges = true;
         RequestInvalidateCanvas?.Invoke();
     }
@@ -1107,12 +1211,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void DeleteSelectedAnnotation()
     {
-        if (!HasOpenDocument || ActiveTab is null || SelectedAnnotation is null) return;
+        if (!HasOpenDocument || ActivePdfTab is null || SelectedAnnotation is null) return;
 
         var toRemove = SelectedAnnotation;
-        PushUndoSnapshot(ActiveTab);
-        ActiveTab.EditPlan.Annotations.RemoveAll(a => a.Id == toRemove.Id);
-        ActiveTab.EditPlan.HasChanges = true;
+        PushUndoSnapshot(ActivePdfTab);
+        ActivePdfTab.EditPlan.Annotations.RemoveAll(a => a.Id == toRemove.Id);
+        ActivePdfTab.EditPlan.HasChanges = true;
         HasUnsavedChanges = true;
         SelectedAnnotation = null;
         NotifyAnnotationStateChanged();
@@ -1121,9 +1225,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void ToggleOrUpdateFormField(PdfFormField field, bool? isChecked = null, string? textValue = null)
     {
-        if (!HasOpenDocument || ActiveTab is null || field.IsReadOnly) return;
+        if (!HasOpenDocument || ActivePdfTab is null || field.IsReadOnly) return;
 
-        PushUndoSnapshot(ActiveTab);
+        PushUndoSnapshot(ActivePdfTab);
         if (isChecked.HasValue)
         {
             field.IsChecked = isChecked.Value;
@@ -1132,7 +1236,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             field.Value = textValue;
         }
-        ActiveTab.EditPlan.HasChanges = true;
+        ActivePdfTab.EditPlan.HasChanges = true;
         HasUnsavedChanges = true;
         OnPropertyChanged(nameof(FormFields));
         RequestInvalidateCanvas?.Invoke();
@@ -1141,16 +1245,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task ApplyRedactionsAndSaveAsync()
     {
-        if (!HasOpenDocument || ActiveTab is null) return;
+        if (!HasOpenDocument || ActivePdfTab is null) return;
         var options = new PdfSaveOptions(
-            UserPassword: ProtectWithPassword && !string.IsNullOrWhiteSpace(DocumentPassword) ? DocumentPassword : ActiveTab.Password,
-            OwnerPassword: ProtectWithPassword && !string.IsNullOrWhiteSpace(DocumentPassword) ? DocumentPassword : ActiveTab.Password,
+            UserPassword: ProtectWithPassword && !string.IsNullOrWhiteSpace(DocumentPassword) ? DocumentPassword : ActivePdfTab.Password,
+            OwnerPassword: ProtectWithPassword && !string.IsNullOrWhiteSpace(DocumentPassword) ? DocumentPassword : ActivePdfTab.Password,
             UseAes256: true,
             FlattenForms: FlattenFormsOnSave,
             BurnRedactions: true,
-            SourcePassword: ActiveTab.Password);
+            SourcePassword: ActivePdfTab.Password);
 
-        await SaveToPathAsync(ActiveTab.OriginalFilePath, options);
+        await SaveToPathAsync(ActivePdfTab.OriginalFilePath, options);
         StatusMessage = "Redactions applied";
         ShowToast("Redactions applied");
     }
@@ -1181,7 +1285,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void ApplySignatureBytes(byte[] pngBytes)
     {
-        if (!HasOpenDocument || ActiveTab is null || pngBytes.Length == 0) return;
+        if (!HasOpenDocument || ActivePdfTab is null || pngBytes.Length == 0) return;
 
         int pageIdx = Math.Clamp(CurrentPage - 1, 0, Math.Max(0, Pages.Count - 1));
         var page = Pages[pageIdx];
@@ -1257,9 +1361,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private void SyncFormFieldsFromPlan()
     {
         FormFields.Clear();
-        if (ActiveTab is not null)
+        if (ActivePdfTab is not null)
         {
-            foreach (var f in ActiveTab.EditPlan.FormFields)
+            foreach (var f in ActivePdfTab.EditPlan.FormFields)
             {
                 FormFields.Add(f);
             }
@@ -1284,13 +1388,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void RotatePageAt(int displayIndex, int quarterTurnsDelta)
     {
-        if (!HasOpenDocument || ActiveTab is null || displayIndex < 0 || displayIndex >= ActiveTab.EditPlan.Entries.Count)
+        if (!HasOpenDocument || ActivePdfTab is null || displayIndex < 0 || displayIndex >= ActivePdfTab.EditPlan.Entries.Count)
         {
             return;
         }
 
-        PushUndoSnapshot(ActiveTab);
-        ActiveTab.EditPlan.RotateAt(displayIndex, quarterTurnsDelta);
+        PushUndoSnapshot(ActivePdfTab);
+        ActivePdfTab.EditPlan.RotateAt(displayIndex, quarterTurnsDelta);
         HasUnsavedChanges = true;
         RebuildPagesFromPlan();
         StatusMessage = $"Rotated page {displayIndex + 1}";
@@ -1299,24 +1403,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void DeleteSelectedPage(object? parameter)
     {
-        if (!HasOpenDocument || ActiveTab is null || Pages.Count <= 1)
+        if (!HasOpenDocument || ActivePdfTab is null || Pages.Count <= 1)
         {
             return;
         }
 
         int targetIdx = ResolveTargetDisplayIndex(parameter);
-        if (targetIdx < 0 || targetIdx >= ActiveTab.EditPlan.Entries.Count) return;
+        if (targetIdx < 0 || targetIdx >= ActivePdfTab.EditPlan.Entries.Count) return;
 
-        PushUndoSnapshot(ActiveTab);
-        if (!ActiveTab.EditPlan.DeleteAt(targetIdx))
+        PushUndoSnapshot(ActivePdfTab);
+        if (!ActivePdfTab.EditPlan.DeleteAt(targetIdx))
         {
-            ActiveTab.UndoStack.Pop();
+            ActivePdfTab.UndoStack.Pop();
             NotifyUndoRedoChanged();
             return;
         }
 
         HasUnsavedChanges = true;
-        int nextPage = Math.Clamp(targetIdx + 1, 1, ActiveTab.EditPlan.Entries.Count);
+        int nextPage = Math.Clamp(targetIdx + 1, 1, ActivePdfTab.EditPlan.Entries.Count);
         SetCurrentPageFromScroll(nextPage);
         RebuildPagesFromPlan();
         NotifyAnnotationStateChanged();
@@ -1327,13 +1431,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void InsertBlankPageAfter(object? parameter)
     {
-        if (!HasOpenDocument || ActiveTab is null || Pages.Count == 0) return;
+        if (!HasOpenDocument || ActivePdfTab is null || Pages.Count == 0) return;
 
         int targetIdx = ResolveTargetDisplayIndex(parameter);
         var refPage = Pages[targetIdx];
 
-        PushUndoSnapshot(ActiveTab);
-        int insertedIdx = ActiveTab.EditPlan.InsertBlankAfter(targetIdx, refPage.WidthPoints, refPage.HeightPoints);
+        PushUndoSnapshot(ActivePdfTab);
+        int insertedIdx = ActivePdfTab.EditPlan.InsertBlankAfter(targetIdx, refPage.WidthPoints, refPage.HeightPoints);
         HasUnsavedChanges = true;
         SetCurrentPageFromScroll(insertedIdx + 1);
         RebuildPagesFromPlan();
@@ -1347,7 +1451,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task InsertPdfAfterAsync(object? parameter)
     {
-        if (!HasOpenDocument || ActiveTab is null || RequestOpenMultipleFilePaths is null) return;
+        if (!HasOpenDocument || ActivePdfTab is null || RequestOpenMultipleFilePaths is null) return;
         int afterIdx = ResolveTargetDisplayIndex(parameter);
         var files = await RequestOpenMultipleFilePaths.Invoke();
         if (files is null || files.Count == 0) return;
@@ -1357,47 +1461,48 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task InsertFilesAfterPageAsync(int afterDisplayIndex, IReadOnlyList<string> externalPdfPaths)
     {
-        if (ActiveTab is null || externalPdfPaths.Count == 0 || ActiveTab.EditPlan.Entries.Count == 0) return;
+        if (ActivePdfTab is null || externalPdfPaths.Count == 0 || ActivePdfTab.EditPlan.Entries.Count == 0) return;
 
-        int clampedAfter = Math.Clamp(afterDisplayIndex, 0, ActiveTab.EditPlan.Entries.Count - 1);
-        var opts = new PdfSaveOptions(SourcePassword: ActiveTab.Password);
+        int clampedAfter = Math.Clamp(afterDisplayIndex, 0, ActivePdfTab.EditPlan.Entries.Count - 1);
+        var opts = new PdfSaveOptions(SourcePassword: ActivePdfTab.Password);
 
         var headPlan = new StructuralEditPlan();
         for (int i = 0; i <= clampedAfter; i++)
         {
-            headPlan.Entries.Add(ActiveTab.EditPlan.Entries[i]);
+            headPlan.Entries.Add(ActivePdfTab.EditPlan.Entries[i]);
         }
 
         var tailPlan = new StructuralEditPlan();
-        for (int i = clampedAfter + 1; i < ActiveTab.EditPlan.Entries.Count; i++)
+        for (int i = clampedAfter + 1; i < ActivePdfTab.EditPlan.Entries.Count; i++)
         {
-            tailPlan.Entries.Add(ActiveTab.EditPlan.Entries[i]);
+            tailPlan.Entries.Add(ActivePdfTab.EditPlan.Entries[i]);
         }
 
         var mergeInputs = new List<string>();
         string headPath = CreateTempPdfPath("head");
-        await _editorService.ApplyPlanAndSaveAsync(ActiveTab.WorkingFilePath, headPath, headPlan, saveOptions: opts);
+        await _editorService.ApplyPlanAndSaveAsync(ActivePdfTab.WorkingFilePath, headPath, headPlan, saveOptions: opts);
         mergeInputs.Add(headPath);
         mergeInputs.AddRange(externalPdfPaths);
 
         if (tailPlan.Entries.Count > 0)
         {
             string tailPath = CreateTempPdfPath("tail");
-            await _editorService.ApplyPlanAndSaveAsync(ActiveTab.WorkingFilePath, tailPath, tailPlan, saveOptions: opts);
+            await _editorService.ApplyPlanAndSaveAsync(ActivePdfTab.WorkingFilePath, tailPath, tailPlan, saveOptions: opts);
             mergeInputs.Add(tailPath);
         }
 
         string mergedWorking = CreateTempPdfPath("inserted");
         await _editorService.MergeAsync(mergeInputs, mergedWorking);
 
-        PushUndoSnapshot(ActiveTab);
+        PushUndoSnapshot(ActivePdfTab);
 
         BitmapCache.Clear();
         var mergedPages = await _renderEngine.OpenAsync(mergedWorking);
-        ActiveTab.WorkingFilePath = mergedWorking;
-        ActiveTab.Password = null;
-        ActiveTab.EditPlan.ResetFromPages(mergedPages);
-        ActiveTab.EditPlan.HasChanges = true;
+        ActivePdfTab.WorkingFilePath = mergedWorking;
+        ActivePdfTab.Password = null;
+        ActivePdfTab.EditPlan.ResetFromPages(mergedPages);
+        ActivePdfTab.EditPlan.HasChanges = true;
+        ActivePdfTab.ClearTextLayoutCache();
         HasUnsavedChanges = true;
 
         RebuildPagesFromPlan();
@@ -1483,16 +1588,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void MovePage(int fromIndex, int toIndex)
     {
-        if (!HasOpenDocument || ActiveTab is null || fromIndex == toIndex) return;
-        if (fromIndex < 0 || fromIndex >= ActiveTab.EditPlan.Entries.Count || toIndex < 0 || toIndex >= ActiveTab.EditPlan.Entries.Count)
+        if (!HasOpenDocument || ActivePdfTab is null || fromIndex == toIndex) return;
+        if (fromIndex < 0 || fromIndex >= ActivePdfTab.EditPlan.Entries.Count || toIndex < 0 || toIndex >= ActivePdfTab.EditPlan.Entries.Count)
         {
             return;
         }
 
-        PushUndoSnapshot(ActiveTab);
-        if (!ActiveTab.EditPlan.Move(fromIndex, toIndex))
+        PushUndoSnapshot(ActivePdfTab);
+        if (!ActivePdfTab.EditPlan.Move(fromIndex, toIndex))
         {
-            ActiveTab.UndoStack.Pop();
+            ActivePdfTab.UndoStack.Pop();
             NotifyUndoRedoChanged();
             return;
         }
@@ -1507,37 +1612,51 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanUndo))]
     private async Task UndoAsync()
     {
-        if (ActiveTab is null || ActiveTab.UndoStack.Count == 0) return;
+        if (ActiveTab is null) return;
+        if (ActivePdfTab is not null)
+        {
+            if (ActivePdfTab.UndoStack.Count == 0) return;
 
-        var current = (ActiveTab.WorkingFilePath, ActiveTab.EditPlan.Clone());
-        var previous = ActiveTab.UndoStack.Pop();
-        ActiveTab.RedoStack.Push(current);
+            var current = (ActivePdfTab.WorkingFilePath, ActivePdfTab.EditPlan.Clone());
+            var previous = ActivePdfTab.UndoStack.Pop();
+            ActivePdfTab.RedoStack.Push(current);
 
-        await RestoreTabSnapshotAsync(ActiveTab, previous);
-        HasUnsavedChanges = ActiveTab.UndoStack.Count > 0 || ActiveTab.EditPlan.HasChanges;
-        StatusMessage = HasUnsavedChanges ? "Undone" : "Ready";
+            await RestoreTabSnapshotAsync(ActivePdfTab, previous);
+            HasUnsavedChanges = ActivePdfTab.UndoStack.Count > 0 || ActivePdfTab.EditPlan.HasChanges;
+            StatusMessage = HasUnsavedChanges ? "Undone" : "Ready";
+            return;
+        }
+
+        UndoActiveNonPdfTab();
     }
 
     [RelayCommand(CanExecute = nameof(CanRedo))]
     private async Task RedoAsync()
     {
-        if (ActiveTab is null || ActiveTab.RedoStack.Count == 0) return;
+        if (ActiveTab is null) return;
+        if (ActivePdfTab is not null)
+        {
+            if (ActivePdfTab.RedoStack.Count == 0) return;
 
-        var current = (ActiveTab.WorkingFilePath, ActiveTab.EditPlan.Clone());
-        var next = ActiveTab.RedoStack.Pop();
-        ActiveTab.UndoStack.Push(current);
+            var current = (ActivePdfTab.WorkingFilePath, ActivePdfTab.EditPlan.Clone());
+            var next = ActivePdfTab.RedoStack.Pop();
+            ActivePdfTab.UndoStack.Push(current);
 
-        await RestoreTabSnapshotAsync(ActiveTab, next);
-        HasUnsavedChanges = true;
-        StatusMessage = "Redone";
+            await RestoreTabSnapshotAsync(ActivePdfTab, next);
+            HasUnsavedChanges = true;
+            StatusMessage = "Redone";
+            return;
+        }
+
+        RedoActiveNonPdfTab();
     }
 
     [RelayCommand]
     private async Task ExtractSelectedPageAsync(object? parameter)
     {
-        if (!HasOpenDocument || ActiveTab is null || RequestSaveFilePath is null) return;
+        if (!HasOpenDocument || ActivePdfTab is null || RequestSaveFilePath is null) return;
         int targetIdx = ResolveTargetDisplayIndex(parameter);
-        string suggestedName = $"{Path.GetFileNameWithoutExtension(ActiveTab.Title)}_page_{targetIdx + 1}.pdf";
+        string suggestedName = $"{Path.GetFileNameWithoutExtension(ActivePdfTab.Title)}_page_{targetIdx + 1}.pdf";
         string? outputPath = await RequestSaveFilePath.Invoke(suggestedName);
         if (string.IsNullOrWhiteSpace(outputPath)) return;
 
@@ -1546,28 +1665,28 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task ExtractPagesToPathAsync(IReadOnlyList<int> displayIndices, string outputPath)
     {
-        if (ActiveTab is null || displayIndices.Count == 0) return;
+        if (ActivePdfTab is null || displayIndices.Count == 0) return;
 
         var subsetPlan = new StructuralEditPlan();
         foreach (int idx in displayIndices)
         {
-            if (idx >= 0 && idx < ActiveTab.EditPlan.Entries.Count)
+            if (idx >= 0 && idx < ActivePdfTab.EditPlan.Entries.Count)
             {
-                subsetPlan.Entries.Add(ActiveTab.EditPlan.Entries[idx]);
+                subsetPlan.Entries.Add(ActivePdfTab.EditPlan.Entries[idx]);
             }
         }
 
         if (subsetPlan.Entries.Count == 0) return;
 
-        var opts = new PdfSaveOptions(SourcePassword: ActiveTab.Password);
-        await _editorService.ApplyPlanAndSaveAsync(ActiveTab.WorkingFilePath, outputPath, subsetPlan, saveOptions: opts);
+        var opts = new PdfSaveOptions(SourcePassword: ActivePdfTab.Password);
+        await _editorService.ApplyPlanAndSaveAsync(ActivePdfTab.WorkingFilePath, outputPath, subsetPlan, saveOptions: opts);
         StatusMessage = $"Extracted {subsetPlan.Entries.Count} page(s)";
     }
 
     [RelayCommand]
     private async Task MergeDocumentsAsync()
     {
-        if (!HasOpenDocument || ActiveTab is null || RequestOpenMultipleFilePaths is null) return;
+        if (!HasOpenDocument || ActivePdfTab is null || RequestOpenMultipleFilePaths is null) return;
         var files = await RequestOpenMultipleFilePaths.Invoke();
         if (files is null || files.Count == 0) return;
 
@@ -1576,25 +1695,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task MergeFilesIntoCurrentDocumentAsync(IReadOnlyList<string> externalPdfPaths)
     {
-        if (ActiveTab is null || externalPdfPaths.Count == 0) return;
+        if (ActivePdfTab is null || externalPdfPaths.Count == 0) return;
 
         string materializedCurrent = CreateTempPdfPath("staged");
         string mergedWorking = CreateTempPdfPath("merged");
 
-        var opts = new PdfSaveOptions(SourcePassword: ActiveTab.Password);
-        await _editorService.ApplyPlanAndSaveAsync(ActiveTab.WorkingFilePath, materializedCurrent, ActiveTab.EditPlan, saveOptions: opts);
+        var opts = new PdfSaveOptions(SourcePassword: ActivePdfTab.Password);
+        await _editorService.ApplyPlanAndSaveAsync(ActivePdfTab.WorkingFilePath, materializedCurrent, ActivePdfTab.EditPlan, saveOptions: opts);
         var inputs = new List<string>(1 + externalPdfPaths.Count) { materializedCurrent };
         inputs.AddRange(externalPdfPaths);
         await _editorService.MergeAsync(inputs, mergedWorking);
 
-        PushUndoSnapshot(ActiveTab);
+        PushUndoSnapshot(ActivePdfTab);
 
         BitmapCache.Clear();
         var mergedPages = await _renderEngine.OpenAsync(mergedWorking);
-        ActiveTab.WorkingFilePath = mergedWorking;
-        ActiveTab.Password = null;
-        ActiveTab.EditPlan.ResetFromPages(mergedPages);
-        ActiveTab.EditPlan.HasChanges = true;
+        ActivePdfTab.WorkingFilePath = mergedWorking;
+        ActivePdfTab.Password = null;
+        ActivePdfTab.EditPlan.ResetFromPages(mergedPages);
+        ActivePdfTab.EditPlan.HasChanges = true;
+        ActivePdfTab.ClearTextLayoutCache();
         HasUnsavedChanges = true;
 
         RebuildPagesFromPlan();
@@ -1607,7 +1727,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private async Task SaveDocumentAsync()
     {
         if (!HasOpenDocument || ActiveTab is null) return;
-        await SaveToPathAsync(ActiveTab.OriginalFilePath);
+        if (ActivePdfTab is not null)
+        {
+            await SaveToPathAsync(ActivePdfTab.OriginalFilePath);
+            return;
+        }
+
+        if (!File.Exists(ActiveTab.OriginalFilePath) && RequestSaveFilePath is not null)
+        {
+            await SaveDocumentAsAsync();
+            return;
+        }
+
+        await SaveActiveNonPdfTabAsync(ActiveTab.OriginalFilePath);
     }
 
     [RelayCommand]
@@ -1617,18 +1749,30 @@ public sealed partial class MainWindowViewModel : ObservableObject
         string? targetPath = await RequestSaveFilePath.Invoke(ActiveTab.Title);
         if (string.IsNullOrWhiteSpace(targetPath)) return;
 
-        await SaveToPathAsync(targetPath);
+        if (ActivePdfTab is not null)
+        {
+            await SaveToPathAsync(targetPath);
+        }
+        else
+        {
+            await SaveActiveNonPdfTabAsync(targetPath);
+        }
     }
 
     public async Task SaveToPathAsync(string targetPath, PdfSaveOptions? options = null)
     {
         if (ActiveTab is null) return;
+        if (ActivePdfTab is null)
+        {
+            await SaveActiveNonPdfTabAsync(targetPath);
+            return;
+        }
 
         StatusMessage = $"Saving {Path.GetFileName(targetPath)}…";
 
         string? nextPassword = ProtectWithPassword && !string.IsNullOrWhiteSpace(DocumentPassword)
             ? DocumentPassword
-            : options?.UserPassword ?? ActiveTab.Password;
+            : options?.UserPassword ?? ActivePdfTab.Password;
 
         var effectiveOptions = options ?? new PdfSaveOptions(
             UserPassword: nextPassword,
@@ -1636,17 +1780,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
             UseAes256: true,
             FlattenForms: FlattenFormsOnSave,
             BurnRedactions: false,
-            SourcePassword: ActiveTab.Password);
+            SourcePassword: ActivePdfTab.Password);
 
-        if (effectiveOptions.SourcePassword is null && ActiveTab.Password is not null)
+        if (effectiveOptions.SourcePassword is null && ActivePdfTab.Password is not null)
         {
-            effectiveOptions = effectiveOptions with { SourcePassword = ActiveTab.Password };
+            effectiveOptions = effectiveOptions with { SourcePassword = ActivePdfTab.Password };
         }
 
         await _editorService.ApplyPlanAndSaveAsync(
-            ActiveTab.WorkingFilePath,
+            ActivePdfTab.WorkingFilePath,
             targetPath,
-            ActiveTab.EditPlan,
+            ActivePdfTab.EditPlan,
             updatedMetadata: null,
             ct: CancellationToken.None,
             saveOptions: effectiveOptions);
@@ -1662,23 +1806,27 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ? []
             : await _editorService.ReadFormFieldsAsync(targetPath, reopenPassword);
 
-        ActiveTab.OriginalFilePath = targetPath;
-        ActiveTab.WorkingFilePath = targetPath;
-        ActiveTab.Password = reopenPassword;
-        ActiveTab.Title = Path.GetFileName(targetPath);
-        ActiveTab.UndoStack.Clear();
-        ActiveTab.RedoStack.Clear();
-        ActiveTab.EditPlan.ResetFromPages(savedPages);
+        ActivePdfTab.OriginalFilePath = targetPath;
+        ActivePdfTab.WorkingFilePath = targetPath;
+        ActivePdfTab.Password = reopenPassword;
+        ActivePdfTab.Title = Path.GetFileName(targetPath);
+        ActivePdfTab.UndoStack.Clear();
+        ActivePdfTab.RedoStack.Clear();
+        ActivePdfTab.EditPlan.ResetFromPages(savedPages);
+        ActivePdfTab.ClearTextLayoutCache();
         foreach (var field in reloadedFields)
         {
-            ActiveTab.EditPlan.FormFields.Add(field);
+            ActivePdfTab.EditPlan.FormFields.Add(field);
         }
+        ActivePdfTab.RefreshFileMetadata();
+        ActivePdfTab.UpdateMetadataBadges();
         NotifyUndoRedoChanged();
         SelectedAnnotation = null;
 
         DocumentPath = targetPath;
-        DocumentTitle = ActiveTab.Title;
+        DocumentTitle = ActivePdfTab.Title;
         HasUnsavedChanges = false;
+        OnPropertyChanged(nameof(ContextBarStatusText));
 
         OutlineNodes.Clear();
         foreach (var node in outline)
@@ -1691,19 +1839,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
         NotifyAnnotationStateChanged();
         SyncFormFieldsFromPlan();
         StatusMessage = string.IsNullOrEmpty(reopenPassword)
-            ? $"Saved {ActiveTab.Title}"
-            : $"Saved {ActiveTab.Title} (protected)";
+            ? $"Saved {ActivePdfTab.Title}"
+            : $"Saved {ActivePdfTab.Title} (protected)";
         ShowToast("Saved");
     }
 
-    private void PushUndoSnapshot(DocumentTabViewModel tab)
+    private void PushUndoSnapshot(PdfWorkspaceViewModel tab)
     {
         tab.UndoStack.Push((tab.WorkingFilePath, tab.EditPlan.Clone()));
         tab.RedoStack.Clear();
         NotifyUndoRedoChanged();
     }
 
-    private async Task RestoreTabSnapshotAsync(DocumentTabViewModel tab, (string WorkingPath, StructuralEditPlan Plan) snapshot)
+    private async Task RestoreTabSnapshotAsync(PdfWorkspaceViewModel tab, (string WorkingPath, StructuralEditPlan Plan) snapshot)
     {
         if (!string.Equals(tab.WorkingFilePath, snapshot.WorkingPath, StringComparison.OrdinalIgnoreCase))
         {
@@ -1713,6 +1861,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         tab.EditPlan.RestoreFrom(snapshot.Plan);
+        tab.ClearTextLayoutCache();
         SelectedAnnotation = null;
         NotifyUndoRedoChanged();
 
@@ -1867,7 +2016,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (idx < 0) return;
 
         bool wasActive = ReferenceEquals(tab, ActiveTab);
+        RecordClosedTab(tab);
         OpenTabs.RemoveAt(idx);
+        await tab.DisposeAsync();
+        RefreshFilteredOpenTabs();
 
         if (!wasActive) return;
 
@@ -1878,8 +2030,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         else
         {
-            ActiveTab = null;
+            SetActiveTabAndNotify(null);
             SelectedAnnotation = null;
+            ClearPdfTextSelection();
+            CancelInlinePdfTextEdit();
             CancelThumbnails();
             ClearSearchState();
             BitmapCache.Clear();
@@ -1914,10 +2068,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (!DocumentFormatHelper.IsSupportedFile(fullPath))
+        {
+            ShowErrorDialog($"Unsupported file format:\n{Path.GetFileName(fullPath)}");
+            return;
+        }
+
+        var kind = DocumentFormatHelper.GetFormatKind(fullPath);
+        if (kind != DocumentFormatKind.Pdf)
+        {
+            await LoadNonPdfFileAsync(fullPath, kind);
+            return;
+        }
+
         try
         {
             StatusMessage = $"Opening {Path.GetFileName(fullPath)}…";
             ClearSearchState();
+            ClearPdfTextSelection();
+            CancelInlinePdfTextEdit();
             BitmapCache.Clear();
 
             var pages = await _renderEngine.OpenAsync(fullPath, password);
@@ -1929,16 +2098,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
             OpenPasswordInput = string.Empty;
             OpenPasswordError = string.Empty;
 
-            var newTab = new DocumentTabViewModel(fullPath) { Password = password };
+            var newTab = new PdfWorkspaceViewModel(fullPath) { Password = password, IsLoaded = true };
             newTab.EditPlan.ResetFromPages(pages);
             foreach (var f in fields)
             {
                 newTab.EditPlan.FormFields.Add(f);
             }
+            newTab.UpdateMetadataBadges();
             OpenTabs.Add(newTab);
+            RefreshFilteredOpenTabs();
 
             foreach (var t in OpenTabs) t.IsActive = ReferenceEquals(t, newTab);
-            ActiveTab = newTab;
+            SetActiveTabAndNotify(newTab);
             SelectedAnnotation = null;
 
             OutlineNodes.Clear();
@@ -1985,16 +2156,36 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task ActivateTabAsync(DocumentTabViewModel tab)
     {
+        if (tab is not PdfWorkspaceViewModel pdfTab)
+        {
+            await ActivateNonPdfTabAsync(tab);
+            return;
+        }
+
         try
         {
             ClearSearchState();
+            ClearPdfTextSelection();
+            CancelInlinePdfTextEdit();
             BitmapCache.Clear();
 
-            await _renderEngine.OpenAsync(tab.WorkingFilePath, tab.Password);
+            if (!pdfTab.IsLoaded && File.Exists(pdfTab.OriginalFilePath))
+            {
+                var pages = await _renderEngine.OpenAsync(pdfTab.OriginalFilePath, pdfTab.Password);
+                var fields = await _editorService.ReadFormFieldsAsync(pdfTab.OriginalFilePath, pdfTab.Password);
+                pdfTab.EditPlan.ResetFromPages(pages);
+                foreach (var f in fields) pdfTab.EditPlan.FormFields.Add(f);
+                pdfTab.IsLoaded = true;
+            }
+            else
+            {
+                await _renderEngine.OpenAsync(pdfTab.WorkingFilePath, pdfTab.Password);
+            }
+
             var outline = await _renderEngine.GetOutlineAsync();
 
-            foreach (var t in OpenTabs) t.IsActive = ReferenceEquals(t, tab);
-            ActiveTab = tab;
+            foreach (var t in OpenTabs) t.IsActive = ReferenceEquals(t, pdfTab);
+            SetActiveTabAndNotify(pdfTab);
             SelectedAnnotation = null;
 
             OutlineNodes.Clear();
@@ -2003,12 +2194,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 OutlineNodes.Add(node);
             }
 
-            DocumentPath = tab.OriginalFilePath;
-            DocumentTitle = tab.Title;
+            DocumentPath = pdfTab.OriginalFilePath;
+            DocumentTitle = pdfTab.Title;
             HasOpenDocument = true;
-            HasUnsavedChanges = tab.IsDirty;
-            SetCurrentPageFromScroll(Math.Clamp(tab.CurrentPage, 1, Math.Max(1, tab.EditPlan.Entries.Count)));
-            SetZoomPercentFromViewport(tab.ZoomPercent);
+            HasUnsavedChanges = pdfTab.IsDirty;
+            SetCurrentPageFromScroll(Math.Clamp(pdfTab.CurrentPage, 1, Math.Max(1, pdfTab.EditPlan.Entries.Count)));
+            SetZoomPercentFromViewport(pdfTab.ZoomPercent);
+            pdfTab.UpdateMetadataBadges();
             NotifyUndoRedoChanged();
             RebuildPagesFromPlan();
             NotifyAnnotationStateChanged();
@@ -2028,9 +2220,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void RebuildPagesFromPlan()
     {
-        if (ActiveTab is null) return;
+        if (ActivePdfTab is null) return;
 
-        var builtPages = ActiveTab.EditPlan.BuildPageInfos();
+        var builtPages = ActivePdfTab.EditPlan.BuildPageInfos();
         Pages.Clear();
         foreach (var p in builtPages)
         {
@@ -2038,6 +2230,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         TotalPages = Math.Max(1, builtPages.Count);
+        ActivePdfTab.UpdateMetadataBadges();
+        OnPropertyChanged(nameof(ContextBarStatusText));
         UpdateActivePageMetadata();
 
         CancelThumbnails();
@@ -2188,37 +2382,42 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private void BuildCommandPalette()
     {
         _allCommands.AddRange([
-            new CommandPaletteItem("open", "Open…", "File", "Ctrl+O", () => _ = OpenDocumentAsync()),
+            new CommandPaletteItem("new-tab", "New Tab / Open…", "Tabs", "Ctrl+T", ToggleNewTabMenu),
+            new CommandPaletteItem("open", "Open File…", "File", "Ctrl+O", () => _ = OpenDocumentAsync()),
             new CommandPaletteItem("save", "Save", "File", "Ctrl+S", () => _ = SaveDocumentAsync()),
             new CommandPaletteItem("save-as", "Save As…", "File", "Ctrl+Shift+S", () => _ = SaveDocumentAsAsync()),
+            new CommandPaletteItem("export-pdf", "Export to PDF…", "File", "", () => _ = ExportToPdfAsync()),
             new CommandPaletteItem("protect", "Protect with Password", "File", "", OpenPasswordModal),
-            new CommandPaletteItem("close-tab", "Close Tab", "File", "Ctrl+W", () => _ = CloseActiveTabAsync()),
+            new CommandPaletteItem("close-tab", "Close Tab", "Tabs", "Ctrl+W", () => _ = CloseActiveTabAsync()),
+            new CommandPaletteItem("reopen-tab", "Reopen Closed Tab", "Tabs", "Ctrl+Shift+T", () => _ = ReopenClosedTabAsync()),
+            new CommandPaletteItem("all-tabs", "Search All Open Tabs", "Tabs", "Ctrl+Shift+A", ToggleAllTabsDropdown),
             new CommandPaletteItem("find", "Find…", "Edit", "Ctrl+F", OpenSearchBar),
             new CommandPaletteItem("undo", "Undo", "Edit", "Ctrl+Z", () => _ = UndoAsync()),
             new CommandPaletteItem("redo", "Redo", "Edit", "Ctrl+Y", () => _ = RedoAsync()),
-            new CommandPaletteItem("tool-select", "Select", "Tools", "V", SetSelectTool),
-            new CommandPaletteItem("tool-hand", "Hand", "Tools", "H", SetHandTool),
-            new CommandPaletteItem("tool-highlight", "Highlight", "Tools", "U", SetHighlightTool),
-            new CommandPaletteItem("tool-underline", "Underline", "Tools", "", SetUnderlineTool),
-            new CommandPaletteItem("tool-draw", "Draw", "Tools", "P", SetDrawTool),
-            new CommandPaletteItem("tool-text", "Text", "Tools", "T", SetTextTool),
-            new CommandPaletteItem("tool-note", "Note", "Tools", "N", SetNoteTool),
-            new CommandPaletteItem("tool-redact", "Redact", "Tools", "R", SetRedactTool),
-            new CommandPaletteItem("tool-sign", "Signature…", "Tools", "", OpenSignatureModal),
+            new CommandPaletteItem("tool-select", "Select", "PDF Tools", "V", SetSelectTool),
+            new CommandPaletteItem("tool-hand", "Hand", "PDF Tools", "H", SetHandTool),
+            new CommandPaletteItem("tool-edit-text", "Edit PDF Text", "PDF Tools", "E", SetEditTextTool),
+            new CommandPaletteItem("tool-highlight", "Highlight", "PDF Tools", "U", SetHighlightTool),
+            new CommandPaletteItem("tool-underline", "Underline", "PDF Tools", "", SetUnderlineTool),
+            new CommandPaletteItem("tool-draw", "Draw", "PDF Tools", "P", SetDrawTool),
+            new CommandPaletteItem("tool-text", "Add Text Box", "PDF Tools", "T", SetTextTool),
+            new CommandPaletteItem("tool-note", "Sticky Note", "PDF Tools", "N", SetNoteTool),
+            new CommandPaletteItem("tool-redact", "Redact", "PDF Tools", "R", SetRedactTool),
+            new CommandPaletteItem("tool-sign", "Signature…", "PDF Tools", "", OpenSignatureModal),
             new CommandPaletteItem("rot-r", "Rotate Right", "Pages", "Ctrl+Shift+R", () => RotateSelectedRight(null)),
             new CommandPaletteItem("rot-l", "Rotate Left", "Pages", "Ctrl+Shift+L", () => RotateSelectedLeft(null)),
             new CommandPaletteItem("del-page", "Delete Page", "Pages", "Del", () => DeleteSelectedPage(null)),
             new CommandPaletteItem("insert-blank", "Insert Blank Page After", "Pages", "", () => InsertBlankPageAfter(null)),
             new CommandPaletteItem("extract", "Extract…", "Pages", "", () => _ = ExtractSelectedPageAsync(null)),
             new CommandPaletteItem("merge", "Merge…", "Pages", "", () => _ = MergeDocumentsAsync()),
-            new CommandPaletteItem("theme", "Theme Picker", "View", "Ctrl+Shift+T", ToggleThemePicker),
+            new CommandPaletteItem("theme", "Theme Picker", "View", "Ctrl+Alt+T", ToggleThemePicker),
             new CommandPaletteItem("left-panel", "Toggle Pages Sidebar", "View", "[", ToggleLeftPanel),
             new CommandPaletteItem("right-panel", "Toggle Inspector", "View", "]", ToggleRightPanel),
             new CommandPaletteItem("zoom-in", "Zoom In", "View", "Ctrl+=", ZoomIn),
             new CommandPaletteItem("zoom-out", "Zoom Out", "View", "Ctrl+-", ZoomOut),
             new CommandPaletteItem("zoom-100", "Actual Size", "View", "Ctrl+0", ResetZoom),
-            new CommandPaletteItem("fit-width", "Fit Width", "View", "Ctrl+1", FitToWidth),
-            new CommandPaletteItem("fit-page", "Fit Page", "View", "Ctrl+2", FitToPage),
+            new CommandPaletteItem("fit-width", "Fit Width", "View", "Alt+1", FitToWidth),
+            new CommandPaletteItem("fit-page", "Fit Page", "View", "Alt+2", FitToPage),
         ]);
     }
 

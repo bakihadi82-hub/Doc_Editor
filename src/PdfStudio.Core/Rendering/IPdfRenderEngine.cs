@@ -19,5 +19,7 @@ public interface IPdfRenderEngine : IAsyncDisposable
     Task<IReadOnlyList<PdfOutlineNode>> GetOutlineAsync(CancellationToken ct = default);
     Task<IReadOnlyList<PdfTextMatch>> FindTextAsync(int pageIndex, string query, bool matchCase = false, CancellationToken ct = default);
     Task<string> ExtractPageTextAsync(int pageIndex, CancellationToken ct = default);
+    Task<PdfPageTextLayout> GetPageTextLayoutAsync(int pageIndex, int rotationQuarterTurns = 0, CancellationToken ct = default);
+    Task<int> GetCharIndexAtPosAsync(int pageIndex, double xPdfPt, double yPdfPt, double xTolerance = 6.0, double yTolerance = 6.0, CancellationToken ct = default);
 }
 

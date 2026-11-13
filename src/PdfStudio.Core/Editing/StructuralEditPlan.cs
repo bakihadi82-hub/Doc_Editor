@@ -31,6 +31,7 @@ public sealed class StructuralEditPlan
     public List<StagedPageEntry> Entries { get; } = [];
     public List<PdfAnnotation> Annotations { get; } = [];
     public List<PdfFormField> FormFields { get; } = [];
+    public List<PdfTextEdit> TextEdits { get; } = [];
     public bool HasChanges { get; set; }
 
     public void ResetFromPageCount(int pageCount)
@@ -38,6 +39,7 @@ public sealed class StructuralEditPlan
         Entries.Clear();
         Annotations.Clear();
         FormFields.Clear();
+        TextEdits.Clear();
         for (int i = 0; i < pageCount; i++)
         {
             Entries.Add(new StagedPageEntry(i));
@@ -50,6 +52,7 @@ public sealed class StructuralEditPlan
         Entries.Clear();
         Annotations.Clear();
         FormFields.Clear();
+        TextEdits.Clear();
         foreach (var p in pages)
         {
             Entries.Add(new StagedPageEntry(
@@ -74,6 +77,10 @@ public sealed class StructuralEditPlan
         {
             copy.FormFields.Add(field.Clone());
         }
+        foreach (var edit in TextEdits)
+        {
+            copy.TextEdits.Add(edit.Clone());
+        }
         return copy;
     }
 
@@ -92,6 +99,12 @@ public sealed class StructuralEditPlan
         foreach (var field in snapshot.FormFields)
         {
             FormFields.Add(field.Clone());
+        }
+
+        TextEdits.Clear();
+        foreach (var edit in snapshot.TextEdits)
+        {
+            TextEdits.Add(edit.Clone());
         }
 
         HasChanges = snapshot.HasChanges;
@@ -138,6 +151,18 @@ public sealed class StructuralEditPlan
             }
         }
 
+        for (int i = TextEdits.Count - 1; i >= 0; i--)
+        {
+            if (TextEdits[i].PageIndex == displayIndex)
+            {
+                TextEdits.RemoveAt(i);
+            }
+            else if (TextEdits[i].PageIndex > displayIndex)
+            {
+                TextEdits[i].PageIndex--;
+            }
+        }
+
         HasChanges = true;
         return true;
     }
@@ -160,6 +185,11 @@ public sealed class StructuralEditPlan
         foreach (var field in FormFields)
         {
             field.PageIndex = RemapMovedPageIndex(field.PageIndex, fromIndex, toIndex);
+        }
+
+        foreach (var edit in TextEdits)
+        {
+            edit.PageIndex = RemapMovedPageIndex(edit.PageIndex, fromIndex, toIndex);
         }
 
         HasChanges = true;
@@ -189,6 +219,14 @@ public sealed class StructuralEditPlan
             if (field.PageIndex >= insertIndex)
             {
                 field.PageIndex++;
+            }
+        }
+
+        foreach (var edit in TextEdits)
+        {
+            if (edit.PageIndex >= insertIndex)
+            {
+                edit.PageIndex++;
             }
         }
 
