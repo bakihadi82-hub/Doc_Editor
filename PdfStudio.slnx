@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PdfStudio.App/PdfStudio.App.csproj" />
+    <Project Path="src/PdfStudio.Core/PdfStudio.Core.csproj" />
+    <Project Path="src/PdfStudio.Editing.PdfSharp/PdfStudio.Editing.PdfSharp.csproj" />
+    <Project Path="src/PdfStudio.Rendering.Pdfium/PdfStudio.Rendering.Pdfium.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PdfStudio.Tests/PdfStudio.Tests.csproj" />
+  </Folder>
+</Solution>

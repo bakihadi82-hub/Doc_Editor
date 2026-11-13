@@ -1,0 +1,88 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Strict 4px / 8px Spacing Grid -->
+  <x:Double x:Key="Space1">4</x:Double>
+  <x:Double x:Key="Space2">8</x:Double>
+  <x:Double x:Key="Space3">12</x:Double>
+  <x:Double x:Key="Space4">16</x:Double>
+  <x:Double x:Key="Space6">24</x:Double>
+  <x:Double x:Key="Space8">32</x:Double>
+
+  <!-- Corner Radii -->
+  <CornerRadius x:Key="BadgeCornerRadius">4</CornerRadius>
+  <CornerRadius x:Key="ControlCornerRadius">6</CornerRadius>
+  <CornerRadius x:Key="FloatingCornerRadius">10</CornerRadius>
+
+  <!-- Layout Dimensions -->
+  <x:Double x:Key="TitleBarHeight">36</x:Double>
+  <x:Double x:Key="LeftSidebarWidth">220</x:Double>
+  <x:Double x:Key="RightInspectorWidth">260</x:Double>
+
+  <BoxShadows x:Key="PageDropShadow">0 6 24 0 #26000000</BoxShadows>
+
+  <ResourceDictionary.ThemeDictionaries>
+    <ResourceDictionary x:Key="Dark">
+      <!-- Obsidian default dark layers -->
+      <SolidColorBrush x:Key="CanvasBackgroundBrush" Color="#0D0F12" />
+      <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#14171D" />
+      <SolidColorBrush x:Key="PanelSubtleBackgroundBrush" Color="#101318" />
+      <SolidColorBrush x:Key="FloatingToolbarBrush" Color="#1C2028" />
+      <SolidColorBrush x:Key="HairlineBorderBrush" Color="#2A303C" />
+      <SolidColorBrush x:Key="FloatingBorderBrush" Color="#363E4D" />
+      <SolidColorBrush x:Key="PageBorderBrush" Color="#2A303C" />
+      <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F3F4F6" />
+      <SolidColorBrush x:Key="TextSecondaryBrush" Color="#9CA3AF" />
+      <SolidColorBrush x:Key="TextTertiaryBrush" Color="#6B7280" />
+      <SolidColorBrush x:Key="AccentBrush" Color="#3B82F6" />
+      <SolidColorBrush x:Key="AccentHoverBrush" Color="#60A5FA" />
+      <SolidColorBrush x:Key="AccentSubtleBrush" Color="#2E3B82F6" />
+      <SolidColorBrush x:Key="AccentTextBrush" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="ControlHoverBrush" Color="#14FFFFFF" />
+      <SolidColorBrush x:Key="ControlPressedBrush" Color="#21FFFFFF" />
+      <SolidColorBrush x:Key="ScrollTrackBrush" Color="#14FFFFFF" />
+      <SolidColorBrush x:Key="ScrollThumbBrush" Color="#599CA3AF" />
+      <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#99D1D5DB" />
+      <SolidColorBrush x:Key="ScrollThumbPressedBrush" Color="#CCF3F4F6" />
+      <SolidColorBrush x:Key="ModalScrimBrush" Color="#99090B0E" />
+      <SolidColorBrush x:Key="SuccessBrush" Color="#10B981" />
+      <SolidColorBrush x:Key="WarningBrush" Color="#F59E0B" />
+      <SolidColorBrush x:Key="DangerBrush" Color="#EF4444" />
+      <SolidColorBrush x:Key="DangerSubtleBrush" Color="#26EF4444" />
+      <BoxShadows x:Key="FloatingPanelShadow">0 8 24 0 #66000000, 0 2 6 0 #40000000</BoxShadows>
+      <BoxShadows x:Key="ModalDialogShadow">0 20 48 0 #99000000</BoxShadows>
+    </ResourceDictionary>
+
+    <ResourceDictionary x:Key="Light">
+      <!-- Studio Light default light layers -->
+      <SolidColorBrush x:Key="CanvasBackgroundBrush" Color="#E5E7EB" />
+      <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#F5F6F8" />
+      <SolidColorBrush x:Key="PanelSubtleBackgroundBrush" Color="#ECEEF2" />
+      <SolidColorBrush x:Key="FloatingToolbarBrush" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="HairlineBorderBrush" Color="#D1D5DB" />
+      <SolidColorBrush x:Key="FloatingBorderBrush" Color="#C4C9D4" />
+      <SolidColorBrush x:Key="PageBorderBrush" Color="#CBD5E1" />
+      <SolidColorBrush x:Key="TextPrimaryBrush" Color="#111827" />
+      <SolidColorBrush x:Key="TextSecondaryBrush" Color="#4B5563" />
+      <SolidColorBrush x:Key="TextTertiaryBrush" Color="#6B7280" />
+      <SolidColorBrush x:Key="AccentBrush" Color="#2563EB" />
+      <SolidColorBrush x:Key="AccentHoverBrush" Color="#1D4ED8" />
+      <SolidColorBrush x:Key="AccentSubtleBrush" Color="#242563EB" />
+      <SolidColorBrush x:Key="AccentTextBrush" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="ControlHoverBrush" Color="#0F111827" />
+      <SolidColorBrush x:Key="ControlPressedBrush" Color="#1A111827" />
+      <SolidColorBrush x:Key="ScrollTrackBrush" Color="#12111827" />
+      <SolidColorBrush x:Key="ScrollThumbBrush" Color="#596B7280" />
+      <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#994B5563" />
+      <SolidColorBrush x:Key="ScrollThumbPressedBrush" Color="#CC1F2937" />
+      <SolidColorBrush x:Key="ModalScrimBrush" Color="#59111827" />
+      <SolidColorBrush x:Key="SuccessBrush" Color="#059669" />
+      <SolidColorBrush x:Key="WarningBrush" Color="#D97706" />
+      <SolidColorBrush x:Key="DangerBrush" Color="#DC2626" />
+      <SolidColorBrush x:Key="DangerSubtleBrush" Color="#1ADC2626" />
+      <BoxShadows x:Key="FloatingPanelShadow">0 8 24 0 #1A0F172A, 0 2 6 0 #0F0F172A</BoxShadows>
+      <BoxShadows x:Key="ModalDialogShadow">0 20 48 0 #260F172A</BoxShadows>
+    </ResourceDictionary>
+  </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>
+

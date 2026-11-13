@@ -1,0 +1,571 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:PdfStudio.App.Controls">
+
+  <!-- 1.5px stroke icon convention -->
+  <Style Selector="Path.icon-stroke">
+    <Setter Property="Stroke" Value="{Binding $parent[TemplatedControl].Foreground}" />
+    <Setter Property="StrokeThickness" Value="1.5" />
+    <Setter Property="StrokeLineCap" Value="Round" />
+    <Setter Property="StrokeJoin" Value="Round" />
+    <Setter Property="Fill" Value="Transparent" />
+    <Setter Property="Stretch" Value="Uniform" />
+    <Setter Property="Width" Value="15" />
+    <Setter Property="Height" Value="15" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+
+  <!-- Linear/Figma Ghost Button: 6px radius, 160ms cubic-bezier(0.16, 1, 0.3, 1) -->
+  <Style Selector="Button.linear-ghost">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+    <Setter Property="Padding" Value="8,5" />
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16">
+          <BrushTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </BrushTransition.Easing>
+        </BrushTransition>
+        <BrushTransition Property="Foreground" Duration="0:0:0.16">
+          <BrushTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </BrushTransition.Easing>
+        </BrushTransition>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1">
+          <TransformOperationsTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </TransformOperationsTransition.Easing>
+        </TransformOperationsTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button.linear-ghost:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+  </Style>
+  <Style Selector="Button.linear-ghost:pointerover">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="Button.linear-ghost:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.97)" />
+  </Style>
+  <Style Selector="Button.linear-ghost.active">
+    <Setter Property="Background" Value="{DynamicResource AccentSubtleBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+  </Style>
+  <Style Selector="Button.linear-ghost.active /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentSubtleBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+  </Style>
+  <Style Selector="Button.linear-ghost.active:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentSubtleBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+  </Style>
+  <Style Selector="Button.linear-ghost.active:pointerover">
+    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+  </Style>
+
+  <!-- Document Tab Elevation (Subtle inactive vs Elevated active tab) -->
+  <Style Selector="Border.doc-tab">
+    <Setter Property="Background" Value="{DynamicResource PanelSubtleBackgroundBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource HairlineBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+    <Setter Property="Padding" Value="8,3" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.16" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.doc-tab.active">
+    <Setter Property="Background" Value="{DynamicResource FloatingToolbarBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource FloatingBorderBrush}" />
+  </Style>
+
+  <!-- Save Pill Button (subtle when clean, primary accent pill when dirty) -->
+  <Style Selector="Button.save-pill">
+    <Setter Property="Background" Value="{DynamicResource PanelSubtleBackgroundBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource HairlineBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+    <Setter Property="Padding" Value="10,4" />
+    <Setter Property="Height" Value="26" />
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16" />
+        <BrushTransition Property="Foreground" Duration="0:0:0.16" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.16" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Button.save-pill:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource FloatingBorderBrush}" />
+  </Style>
+  <Style Selector="Button.save-pill:pointerover">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="Button.save-pill.dirty">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+  </Style>
+  <Style Selector="Button.save-pill.dirty /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+  </Style>
+  <Style Selector="Button.save-pill.dirty:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+  </Style>
+  <Style Selector="Button.save-pill.dirty:pointerover">
+    <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+  </Style>
+
+  <!-- Compact 28x28 Icon Button -->
+  <Style Selector="Button.icon-btn">
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+
+  <!-- Windows Caption Button (36px height) -->
+  <Style Selector="Button.caption-btn">
+    <Setter Property="Width" Value="42" />
+    <Setter Property="Height" Value="36" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16">
+          <BrushTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </BrushTransition.Easing>
+        </BrushTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Button.caption-btn:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+  </Style>
+  <Style Selector="Button.caption-btn:pointerover">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+  </Style>
+  <Style Selector="Button.caption-close:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+  </Style>
+  <Style Selector="Button.caption-close:pointerover">
+    <Setter Property="Foreground" Value="#FFFFFF" />
+  </Style>
+
+  <!-- Primary Accent Button -->
+  <Style Selector="Button.linear-accent">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+    <Setter Property="Padding" Value="12,7" />
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16">
+          <BrushTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </BrushTransition.Easing>
+        </BrushTransition>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1">
+          <TransformOperationsTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </TransformOperationsTransition.Easing>
+        </TransformOperationsTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Button.linear-accent:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+  </Style>
+  <Style Selector="Button.linear-accent:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.97)" />
+  </Style>
+
+  <!-- Subtle Secondary Surface Button (6px radius, 1px hairline) -->
+  <Style Selector="Button.linear-surface">
+    <Setter Property="Background" Value="{DynamicResource PanelSubtleBackgroundBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource HairlineBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+    <Setter Property="Padding" Value="12,6" />
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.16">
+          <BrushTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </BrushTransition.Easing>
+        </BrushTransition>
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.16">
+          <BrushTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </BrushTransition.Easing>
+        </BrushTransition>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.1">
+          <TransformOperationsTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </TransformOperationsTransition.Easing>
+        </TransformOperationsTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Button.linear-surface:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource FloatingBorderBrush}" />
+  </Style>
+  <Style Selector="Button.linear-surface:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.97)" />
+  </Style>
+
+  <!-- GPU-composited Sidebars (160ms TranslateX + Opacity + MaxWidth collapse) -->
+  <Style Selector="Border.sidebar-left">
+    <Setter Property="Width" Value="{StaticResource LeftSidebarWidth}" />
+    <Setter Property="Opacity" Value="1" />
+    <Setter Property="RenderTransform" Value="translateX(0px)" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Width" Duration="0:0:0.16">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.16">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.16">
+          <TransformOperationsTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </TransformOperationsTransition.Easing>
+        </TransformOperationsTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.sidebar-left.collapsed">
+    <Setter Property="Width" Value="0" />
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="RenderTransform" Value="translateX(-16px)" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+  </Style>
+
+  <Style Selector="Border.sidebar-right">
+    <Setter Property="Width" Value="{StaticResource RightInspectorWidth}" />
+    <Setter Property="Opacity" Value="1" />
+    <Setter Property="RenderTransform" Value="translateX(0px)" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Width" Duration="0:0:0.16">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.16">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.16">
+          <TransformOperationsTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </TransformOperationsTransition.Easing>
+        </TransformOperationsTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.sidebar-right.collapsed">
+    <Setter Property="Width" Value="0" />
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="RenderTransform" Value="translateX(16px)" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+  </Style>
+
+  <!-- Modal Scrim & Dialog 160ms GPU-composited transition -->
+  <Style Selector="Grid.modal-overlay">
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.16">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Grid.modal-overlay.open">
+    <Setter Property="Opacity" Value="1" />
+    <Setter Property="IsHitTestVisible" Value="True" />
+  </Style>
+
+  <Style Selector="Border.modal-card">
+    <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+    <Setter Property="RenderTransform" Value="scale(0.96) translateY(6px)" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.16">
+          <TransformOperationsTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </TransformOperationsTransition.Easing>
+        </TransformOperationsTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Grid.modal-overlay.open Border.modal-card">
+    <Setter Property="RenderTransform" Value="scale(1) translateY(0px)" />
+  </Style>
+
+  <!-- Floating Toolbar Pill -->
+  <Style Selector="Border.floating-toolbar">
+    <Setter Property="Background" Value="{DynamicResource FloatingToolbarBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource FloatingBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource FloatingCornerRadius}" />
+    <Setter Property="BoxShadow" Value="{DynamicResource FloatingPanelShadow}" />
+    <Setter Property="Padding" Value="8,6" />
+  </Style>
+
+  <!-- Unified Custom Pill Scrollbars (6px -> 8px on hover, CornerRadius 999, 120ms transitions, 350ms auto-collapse) -->
+  <Style Selector="ScrollViewer">
+    <Setter Property="AllowAutoHide" Value="True" />
+  </Style>
+
+  <Style Selector="ScrollBar">
+    <Setter Property="AllowAutoHide" Value="True" />
+    <Setter Property="HideDelay" Value="0:0:0.35" />
+    <Setter Property="ShowDelay" Value="0:0:0.02" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Opacity" Value="0.35" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.12">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="ScrollBar[IsExpanded=True]">
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+  <Style Selector="ScrollBar:pointerover">
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+
+  <Style Selector="ScrollBar:vertical">
+    <Setter Property="Width" Value="12" />
+    <Setter Property="MinWidth" Value="12" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Grid Background="Transparent" Margin="2,4">
+          <Border x:Name="PART_TrackBackground"
+                  Background="{DynamicResource ScrollTrackBrush}"
+                  CornerRadius="999"
+                  Width="6"
+                  HorizontalAlignment="Right"
+                  Opacity="0.45">
+            <Border.Transitions>
+              <Transitions>
+                <DoubleTransition Property="Width" Duration="0:0:0.12">
+                  <DoubleTransition.Easing>
+                    <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+                  </DoubleTransition.Easing>
+                </DoubleTransition>
+                <DoubleTransition Property="Opacity" Duration="0:0:0.12" />
+              </Transitions>
+            </Border.Transitions>
+          </Border>
+          <Track x:Name="PART_Track"
+                 Orientation="Vertical"
+                 IsDirectionReversed="True"
+                 Minimum="{TemplateBinding Minimum}"
+                 Maximum="{TemplateBinding Maximum}"
+                 Value="{TemplateBinding Value, Mode=TwoWay}"
+                 ViewportSize="{TemplateBinding ViewportSize}">
+            <Track.DecreaseButton>
+              <RepeatButton Background="Transparent" BorderThickness="0" CornerRadius="999" Focusable="False" />
+            </Track.DecreaseButton>
+            <Track.IncreaseButton>
+              <RepeatButton Background="Transparent" BorderThickness="0" CornerRadius="999" Focusable="False" />
+            </Track.IncreaseButton>
+            <Track.Thumb>
+              <Thumb x:Name="PART_Thumb"
+                     Width="6"
+                     MinHeight="28"
+                     HorizontalAlignment="Right"
+                     Background="{DynamicResource ScrollThumbBrush}">
+                <Thumb.Template>
+                  <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            CornerRadius="999" />
+                  </ControlTemplate>
+                </Thumb.Template>
+              </Thumb>
+            </Track.Thumb>
+          </Track>
+        </Grid>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="ScrollBar:horizontal">
+    <Setter Property="Height" Value="12" />
+    <Setter Property="MinHeight" Value="12" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Grid Background="Transparent" Margin="4,2">
+          <Border x:Name="PART_TrackBackground"
+                  Background="{DynamicResource ScrollTrackBrush}"
+                  CornerRadius="999"
+                  Height="6"
+                  VerticalAlignment="Bottom"
+                  Opacity="0.45">
+            <Border.Transitions>
+              <Transitions>
+                <DoubleTransition Property="Height" Duration="0:0:0.12">
+                  <DoubleTransition.Easing>
+                    <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+                  </DoubleTransition.Easing>
+                </DoubleTransition>
+                <DoubleTransition Property="Opacity" Duration="0:0:0.12" />
+              </Transitions>
+            </Border.Transitions>
+          </Border>
+          <Track x:Name="PART_Track"
+                 Orientation="Horizontal"
+                 IsDirectionReversed="False"
+                 Minimum="{TemplateBinding Minimum}"
+                 Maximum="{TemplateBinding Maximum}"
+                 Value="{TemplateBinding Value, Mode=TwoWay}"
+                 ViewportSize="{TemplateBinding ViewportSize}">
+            <Track.DecreaseButton>
+              <RepeatButton Background="Transparent" BorderThickness="0" CornerRadius="999" Focusable="False" />
+            </Track.DecreaseButton>
+            <Track.IncreaseButton>
+              <RepeatButton Background="Transparent" BorderThickness="0" CornerRadius="999" Focusable="False" />
+            </Track.IncreaseButton>
+            <Track.Thumb>
+              <Thumb x:Name="PART_Thumb"
+                     Height="6"
+                     MinWidth="28"
+                     VerticalAlignment="Bottom"
+                     Background="{DynamicResource ScrollThumbBrush}">
+                <Thumb.Template>
+                  <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            CornerRadius="999" />
+                  </ControlTemplate>
+                </Thumb.Template>
+              </Thumb>
+            </Track.Thumb>
+          </Track>
+        </Grid>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="ScrollBar /template/ Thumb">
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Width" Duration="0:0:0.12">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+        <DoubleTransition Property="Height" Duration="0:0:0.12">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+        <BrushTransition Property="Background" Duration="0:0:0.12" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="ScrollBar:vertical:pointerover /template/ Thumb">
+    <Setter Property="Width" Value="8" />
+    <Setter Property="Background" Value="{DynamicResource ScrollThumbHoverBrush}" />
+  </Style>
+  <Style Selector="ScrollBar:vertical:pointerover /template/ Border#PART_TrackBackground">
+    <Setter Property="Width" Value="8" />
+    <Setter Property="Opacity" Value="0.8" />
+  </Style>
+  <Style Selector="ScrollBar:horizontal:pointerover /template/ Thumb">
+    <Setter Property="Height" Value="8" />
+    <Setter Property="Background" Value="{DynamicResource ScrollThumbHoverBrush}" />
+  </Style>
+  <Style Selector="ScrollBar:horizontal:pointerover /template/ Border#PART_TrackBackground">
+    <Setter Property="Height" Value="8" />
+    <Setter Property="Opacity" Value="0.8" />
+  </Style>
+  <Style Selector="ScrollBar /template/ Thumb:pressed">
+    <Setter Property="Background" Value="{DynamicResource ScrollThumbPressedBrush}" />
+  </Style>
+
+  <!-- Document Canvas 150ms Tab Crossfade -->
+  <Style Selector="controls|PdfCanvasControl">
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15">
+          <DoubleTransition.Easing>
+            <SplineEasing X1="0.16" Y1="1" X2="0.3" Y2="1" />
+          </DoubleTransition.Easing>
+        </DoubleTransition>
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <!-- Start View Recent Item Hover Remove -->
+  <Style Selector="Button.recent-remove-btn">
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.12" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.recent-item:pointerover Button.recent-remove-btn">
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+
+</Styles>
+
