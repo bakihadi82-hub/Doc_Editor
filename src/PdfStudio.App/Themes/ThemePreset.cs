@@ -1,9 +1,11 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Styling;
 using CommunityToolkit.Mvvm.ComponentModel;
+using PdfStudio.Core.Formats;
 using SkiaSharp;
 
 namespace PdfStudio.App.Themes;
@@ -69,6 +71,27 @@ public sealed record RecentFileEntry(
     int PageCount)
 {
     public string PageCountLabel => PageCount == 1 ? "1 page" : $"{PageCount} pages";
+
+    [JsonIgnore]
+    public string FormatBadgeText => DocumentFormatHelper.Describe(FilePath).BadgeText;
+
+    [JsonIgnore]
+    public IBrush FormatBadgeBrush => new SolidColorBrush(Color.Parse(DocumentFormatHelper.Describe(FilePath).ColorHex));
+
+    [JsonIgnore]
+    public IBrush FormatBadgeBackgroundBrush
+    {
+        get
+        {
+            var c = Color.Parse(DocumentFormatHelper.Describe(FilePath).ColorHex);
+            return new SolidColorBrush(Color.FromArgb(40, c.R, c.G, c.B));
+        }
+    }
+
+    [JsonIgnore]
+    public string SubtitleLabel => DocumentFormatHelper.GetFormatKind(FilePath) == DocumentFormatKind.Pdf
+        ? PageCountLabel
+        : DocumentFormatHelper.Describe(FilePath).DisplayName;
 }
 
 public sealed class UserAppSettings

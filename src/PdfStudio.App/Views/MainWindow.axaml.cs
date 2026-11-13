@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PdfStudio.App.ViewModels;
+using PdfStudio.Core.Formats;
 using PdfStudio.Core.Forms;
 using SkiaSharp;
 
@@ -19,6 +20,11 @@ public partial class MainWindow : Window
     private Point _dragStartPoint;
     private bool _isDraggingThumbnail;
     private int _dragTargetIndex = -1;
+
+    // Browser tab drag-to-reorder state
+    private DocumentTabViewModel? _dragSourceTab;
+    private Point _tabDragStartPoint;
+    private bool _isDraggingTab;
 
     // Inline form field editor state
     private PdfFormField? _editingFormField;
@@ -45,15 +51,20 @@ public partial class MainWindow : Window
         if (DataContext is MainWindowViewModel vm)
         {
             vm.PromptOnDirtyTabClose = true;
-            vm.RequestOpenFilePath += PickPdfFileAsync;
+            vm.RequestOpenFilePath += PickSupportedFileAsync;
             vm.RequestOpenMultipleFilePaths += PickMultiplePdfFilesAsync;
-            vm.RequestSaveFilePath += PickSavePdfFileAsync;
+            vm.RequestSaveFilePath += PickSaveDocumentFileAsync;
             vm.RequestImportPngBytes += PickPngBytesAsync;
             vm.RequestClearSignaturePad += ClearSignaturePadVisuals;
             vm.RequestFocusSearchBox += FocusSearchBox;
             vm.RequestFocusPageJumpBox += FocusPageJumpBox;
             vm.RequestCopyToClipboard += CopyTextToClipboardAsync;
             vm.RequestTabCrossfade += TriggerTabCrossfade;
+            vm.RequestFocusInlinePdfTextEdit += FocusInlinePdfTextEditBox;
+            vm.RequestFocusTabSearchBox += FocusTabSearchInput;
+            vm.OpenTabs.CollectionChanged += (_, _) =>
+                Dispatcher.UIThread.Post(UpdateTabStripLayout, DispatcherPriority.Background);
+            Dispatcher.UIThread.Post(UpdateTabStripLayout, DispatcherPriority.Background);
         }
     }
 
@@ -175,7 +186,20 @@ public partial class MainWindow : Window
         }
 
         bool isTextBoxFocused = e.Source is TextBox || FocusManager?.GetFocusedElement() is TextBox;
+        if (ctrl && e.Key == Key.C && !isTextBoxFocused &&
+            vm.IsPdfWorkspaceActive && vm.IsPdfSelectionPillVisible && !string.IsNullOrEmpty(vm.SelectedPdfText))
+        {
+            vm.CopySelectedPdfTextCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         if (isTextBoxFocused)
+        {
+            return;
+        }
+
+        if (!vm.IsPdfWorkspaceActive)
         {
             return;
         }
@@ -234,6 +258,10 @@ public partial class MainWindow : Window
                 break;
             case Key.H:
                 vm.SetHandToolCommand.Execute(null);
+                e.Handled = true;
+                break;
+            case Key.E:
+                vm.SetEditTextToolCommand.Execute(null);
                 e.Handled = true;
                 break;
             case Key.U:
@@ -559,15 +587,28 @@ public partial class MainWindow : Window
 
     // --- File Pickers & Drag-Drop ---
 
-    private async Task<string?> PickPdfFileAsync()
+    private async Task<string?> PickSupportedFileAsync()
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Open PDF",
+            Title = "Open Document",
             AllowMultiple = false,
             FileTypeFilter =
             [
-                new FilePickerFileType("PDF Files") { Patterns = ["*.pdf"] }
+                new FilePickerFileType("All Supported Documents")
+                {
+                    Patterns =
+                    [
+                        "*.pdf", "*.xlsx", "*.csv", "*.tsv", "*.docx",
+                        "*.md", "*.txt", "*.json", "*.xml", "*.log",
+                        "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp"
+                    ]
+                },
+                new FilePickerFileType("PDF Documents") { Patterns = ["*.pdf"] },
+                new FilePickerFileType("Spreadsheets") { Patterns = ["*.xlsx", "*.csv", "*.tsv"] },
+                new FilePickerFileType("Word Documents") { Patterns = ["*.docx"] },
+                new FilePickerFileType("Markdown, Code & Text") { Patterns = ["*.md", "*.txt", "*.json", "*.xml", "*.log"] },
+                new FilePickerFileType("Images") { Patterns = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp"] }
             ]
         });
 
@@ -595,16 +636,21 @@ public partial class MainWindow : Window
         return paths.Count > 0 ? paths : null;
     }
 
-    private async Task<string?> PickSavePdfFileAsync(string suggestedFileName)
+    private async Task<string?> PickSaveDocumentFileAsync(string suggestedFileName)
     {
+        string ext = System.IO.Path.GetExtension(suggestedFileName).TrimStart('.').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(ext)) ext = "pdf";
+
+        string label = ext.ToUpperInvariant() + " File";
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-            Title = "Save PDF",
+            Title = "Save Document",
             SuggestedFileName = suggestedFileName,
-            DefaultExtension = "pdf",
+            DefaultExtension = ext,
             FileTypeChoices =
             [
-                new FilePickerFileType("PDF File") { Patterns = ["*.pdf"] }
+                new FilePickerFileType(label) { Patterns = [$"*.{ext}"] },
+                new FilePickerFileType("All Files") { Patterns = ["*.*"] }
             ]
         });
 
@@ -650,7 +696,7 @@ public partial class MainWindow : Window
         foreach (var file in files)
         {
             string? path = file.TryGetLocalPath();
-            if (!string.IsNullOrWhiteSpace(path) && path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(path) && DocumentFormatHelper.IsSupportedFile(path))
             {
                 e.Handled = true;
                 await vm.LoadFileAsync(path);
@@ -658,9 +704,183 @@ public partial class MainWindow : Window
         }
     }
 
+    // --- Browser Tab Strip Ergonomics (Click, Middle-Click Close, Drag-to-Reorder, Scroll) ---
+
+    private void FocusInlinePdfTextEditBox()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            InlinePdfTextEditBox.Focus();
+            InlinePdfTextEditBox.SelectAll();
+        }, DispatcherPriority.Input);
+    }
+
+    private void FocusTabSearchInput()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            TabSearchInput.Focus();
+            TabSearchInput.SelectAll();
+        }, DispatcherPriority.Input);
+    }
+
+    private void InlinePdfTextEditBox_OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+        if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            vm.CommitInlinePdfTextEditCommand.Execute(null);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            vm.CancelInlinePdfTextEditCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
+    private void NewTabBackdrop_OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+        {
+            vm.IsNewTabMenuOpen = false;
+        }
+    }
+
+    private void AllTabsBackdrop_OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+        {
+            vm.IsAllTabsDropdownOpen = false;
+        }
+    }
+
+    private void TabStripScroll_OnSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        UpdateTabStripLayout();
+    }
+
+    private void UpdateTabStripLayout()
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+
+        int totalTabs = vm.OpenTabs.Count;
+        if (totalTabs == 0)
+        {
+            TabScrollLeftBtn.IsVisible = false;
+            TabScrollRightBtn.IsVisible = false;
+            return;
+        }
+
+        double availWidth = TabStripScroll.Bounds.Width;
+        if (availWidth <= 0) availWidth = Math.Max(400, Bounds.Width - 380);
+
+        int pinnedCount = vm.OpenTabs.Count(t => t.IsPinned);
+        int unpinnedCount = totalTabs - pinnedCount;
+        const double pinnedWidth = 136;
+        double spacing = Math.Max(0, totalTabs - 1) * 3.0;
+        double remainingForUnpinned = Math.Max(0, availWidth - pinnedCount * pinnedWidth - spacing - 4);
+        double unpinnedWidth = unpinnedCount > 0
+            ? Math.Clamp(remainingForUnpinned / unpinnedCount, 120.0, 230.0)
+            : 210.0;
+
+        double totalRequired = pinnedCount * pinnedWidth + unpinnedCount * unpinnedWidth + spacing;
+        foreach (var tab in vm.OpenTabs)
+        {
+            tab.TabPillWidth = tab.IsPinned ? pinnedWidth : unpinnedWidth;
+        }
+
+        bool overflow = totalRequired > availWidth + 1.0;
+        TabScrollLeftBtn.IsVisible = overflow;
+        TabScrollRightBtn.IsVisible = overflow;
+    }
+
+    private void TabScrollLeft_OnClick(object? sender, RoutedEventArgs e)
+    {
+        TabStripScroll.Offset = new Vector(Math.Max(0, TabStripScroll.Offset.X - 180), TabStripScroll.Offset.Y);
+    }
+
+    private void TabScrollRight_OnClick(object? sender, RoutedEventArgs e)
+    {
+        TabStripScroll.Offset = new Vector(TabStripScroll.Offset.X + 180, TabStripScroll.Offset.Y);
+    }
+
+    private void BrowserTab_OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+        if (sender is not Control ctrl || ctrl.DataContext is not DocumentTabViewModel tab) return;
+
+        var props = e.GetCurrentPoint(ctrl).Properties;
+        if (props.IsMiddleButtonPressed)
+        {
+            vm.CloseTabCommand.Execute(tab);
+            e.Handled = true;
+            return;
+        }
+
+        if (props.IsLeftButtonPressed)
+        {
+            _dragSourceTab = tab;
+            _tabDragStartPoint = e.GetPosition(BrowserTabItemsControl);
+            _isDraggingTab = false;
+            e.Pointer.Capture(BrowserTabItemsControl);
+            if (!ReferenceEquals(vm.ActiveTab, tab))
+            {
+                vm.SwitchTabCommand.Execute(tab);
+            }
+            e.Handled = true;
+        }
+    }
+
+    private void BrowserTabItemsControl_OnPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_dragSourceTab is null || DataContext is not MainWindowViewModel vm) return;
+        var pos = e.GetPosition(BrowserTabItemsControl);
+        if (!_isDraggingTab)
+        {
+            if (Math.Abs(pos.X - _tabDragStartPoint.X) < 10.0) return;
+            _isDraggingTab = true;
+        }
+
+        int sourceIdx = vm.OpenTabs.IndexOf(_dragSourceTab);
+        if (sourceIdx < 0) return;
+
+        for (int i = 0; i < vm.OpenTabs.Count; i++)
+        {
+            var container = BrowserTabItemsControl.ContainerFromIndex(i);
+            if (container is null) continue;
+            var tl = container.TranslatePoint(new Point(0, 0), BrowserTabItemsControl);
+            if (tl is null) continue;
+            if (pos.X >= tl.Value.X && pos.X <= tl.Value.X + container.Bounds.Width)
+            {
+                if (i != sourceIdx)
+                {
+                    vm.MoveTab(sourceIdx, i);
+                }
+                break;
+            }
+        }
+    }
+
+    private void BrowserTabItemsControl_OnPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_dragSourceTab is not null)
+        {
+            if (e.Pointer.Captured == BrowserTabItemsControl)
+            {
+                e.Pointer.Capture(null);
+            }
+            _dragSourceTab = null;
+            _isDraggingTab = false;
+        }
+    }
+
+    private static bool IsDraggableTitleBarSource(object? source) =>
+        source is Border or Grid or TextBlock or StackPanel or Avalonia.Controls.Presenters.ScrollContentPresenter;
+
     private void TitleBar_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && e.Source is Border or Grid or TextBlock)
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && IsDraggableTitleBarSource(e.Source))
         {
             BeginMoveDrag(e);
         }
@@ -668,7 +888,7 @@ public partial class MainWindow : Window
 
     private void TitleBar_OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (e.Source is Border or Grid or TextBlock)
+        if (IsDraggableTitleBarSource(e.Source))
         {
             ToggleMaximize();
         }

@@ -99,3 +99,4 @@ dotnet publish src\PdfStudio.App\PdfStudio.App.csproj `
 - `src/PdfStudio.Editing.PdfSharp` — `PdfSharpCore` structural saving, merging, extraction, true content redaction, form flattening, and AES encryption.
 - `src/PdfStudio.App` — Avalonia UI desktop shell, Skia viewport (`PdfCanvasControl`), themes, ViewModels, single-instance coordinator, and crash logger.
 - `tests/PdfStudio.Tests` — xUnit and Avalonia Headless automated test suite.
+

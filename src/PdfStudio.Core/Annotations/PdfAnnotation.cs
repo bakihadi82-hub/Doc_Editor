@@ -6,8 +6,10 @@ public enum PdfToolKind
 {
     Select,
     Hand,
+    EditText,
     Highlight,
     Underline,
+    Strikeout,
     Draw,
     Text,
     Note,
@@ -19,6 +21,7 @@ public enum AnnotationKind
 {
     Highlight,
     Underline,
+    Strikeout,
     FreehandDraw,
     TextBox,
     StickyNote,
@@ -45,6 +48,7 @@ public sealed class PdfAnnotation
     public List<PdfPoint> InkPointsPt { get; init; } = [];
     public string TextContent { get; set; } = string.Empty;
     public byte[]? SignaturePngBytes { get; set; }
+    public List<PdfRect> HighlightRectsPt { get; init; } = [];
 
     public PdfAnnotation Clone() => new()
     {
@@ -57,7 +61,40 @@ public sealed class PdfAnnotation
         FontSizePt = FontSizePt,
         InkPointsPt = [.. InkPointsPt],
         TextContent = TextContent,
-        SignaturePngBytes = SignaturePngBytes is null ? null : [.. SignaturePngBytes]
+        SignaturePngBytes = SignaturePngBytes is null ? null : [.. SignaturePngBytes],
+        HighlightRectsPt = [.. HighlightRectsPt]
+    };
+}
+
+/// <summary>
+/// Represents an inline edit or deletion of an existing PDF text block,
+/// previewed live on canvas and committed cleanly to the PDF content stream on Save.
+/// </summary>
+public sealed class PdfTextEdit
+{
+    public Guid Id { get; init; } = Guid.NewGuid();
+    public int PageIndex { get; set; }
+    public PdfRect OriginalBoundsPt { get; set; } = new(0, 0, 0, 0);
+    public string OriginalText { get; set; } = string.Empty;
+    public string NewText { get; set; } = string.Empty;
+    public double FontSizePt { get; set; } = 12.0;
+    public string FontFamily { get; set; } = "Arial";
+    public string ColorHex { get; set; } = "#111827";
+    public bool IsBold { get; set; }
+    public bool IsItalic { get; set; }
+
+    public PdfTextEdit Clone() => new()
+    {
+        Id = Id,
+        PageIndex = PageIndex,
+        OriginalBoundsPt = OriginalBoundsPt,
+        OriginalText = OriginalText,
+        NewText = NewText,
+        FontSizePt = FontSizePt,
+        FontFamily = FontFamily,
+        ColorHex = ColorHex,
+        IsBold = IsBold,
+        IsItalic = IsItalic
     };
 }
 

@@ -189,19 +189,42 @@ public sealed class PdfSharpEditorService : IPdfEditorService
                         var pageRedactions = burnRedactions
                             ? pageAnnotations.Where(a => a.Kind == AnnotationKind.Redaction).ToList()
                             : [];
+                        var pageTextEdits = plan.TextEdits.Where(e => e.PageIndex == displayIdx).ToList();
                         var pageFields = plan.FormFields.Where(f => f.PageIndex == displayIdx).ToList();
 
-                        // 1. Burn true redactions by stripping covered text bytes from content stream first
+                        // 1. Burn true redactions & strip replaced/deleted inline text blocks from content stream first
                         if (pageRedactions.Count > 0)
                         {
-                            StripRedactedContentFromPage(added, pageRedactions);
+                            var redactionBoxes = pageRedactions
+                                .Select(r => NormalizeRect(r.BoundsPt))
+                                .Select(r => new PdfRect(r.Left - 2.0, r.Top - 2.0, r.Right + 2.0, r.Bottom + 2.0))
+                                .ToList();
+                            StripRegionsFromPage(added, redactionBoxes);
                         }
 
-                        // 2. Render visual annotations, redaction blackouts, and form values
+                        if (pageTextEdits.Count > 0)
+                        {
+                            var editBoxes = pageTextEdits
+                                .Select(e => NormalizeRect(e.OriginalBoundsPt))
+                                .Select(r => new PdfRect(r.Left - 0.5, r.Top - 0.5, r.Right + 0.5, r.Bottom + 0.5))
+                                .ToList();
+                            StripRegionsFromPage(added, editBoxes);
+                        }
+
+                        // 2. Render visual annotations, committed text edits, redaction blackouts, and form values
                         bool hasNonRedactionAnnots = pageAnnotations.Any(a => a.Kind != AnnotationKind.Redaction);
-                        if (hasNonRedactionAnnots || pageRedactions.Count > 0 || (flattenForms && pageFields.Count > 0))
+                        bool hasTextEditReplacements = pageTextEdits.Any(e => !string.IsNullOrEmpty(e.NewText));
+                        if (hasNonRedactionAnnots || pageRedactions.Count > 0 || hasTextEditReplacements || (flattenForms && pageFields.Count > 0))
                         {
                             using var gfx = XGraphics.FromPdfPage(added, XGraphicsPdfPageOptions.Append);
+                            foreach (var edit in pageTextEdits)
+                            {
+                                if (!string.IsNullOrEmpty(edit.NewText))
+                                {
+                                    DrawTextEdit(gfx, edit);
+                                }
+                            }
+
                             foreach (var ann in pageAnnotations)
                             {
                                 if (ann.Kind == AnnotationKind.Redaction) continue;
@@ -447,14 +470,57 @@ public sealed class PdfSharpEditorService : IPdfEditorService
             case AnnotationKind.Highlight:
             {
                 var color = ParseColor(ann.ColorHex, XColor.FromArgb(102, 250, 204, 21), alphaOverride: 102);
-                gfx.DrawRectangle(new XSolidBrush(color), rect.Left, rect.Top, w, h);
+                var brush = new XSolidBrush(color);
+                if (ann.HighlightRectsPt.Count > 0)
+                {
+                    foreach (var hr in ann.HighlightRectsPt)
+                    {
+                        var r = NormalizeRect(hr);
+                        gfx.DrawRectangle(brush, r.Left, r.Top, Math.Max(4.0, r.Right - r.Left), Math.Max(4.0, r.Bottom - r.Top));
+                    }
+                }
+                else
+                {
+                    gfx.DrawRectangle(brush, rect.Left, rect.Top, w, h);
+                }
                 break;
             }
             case AnnotationKind.Underline:
             {
                 var color = ParseColor(ann.ColorHex, XColor.FromArgb(255, 234, 179, 8));
-                double y = rect.Bottom;
-                gfx.DrawLine(new XPen(color, Math.Max(1.0, ann.StrokeWidthPt)), rect.Left, y, rect.Right, y);
+                var pen = new XPen(color, Math.Max(1.0, ann.StrokeWidthPt));
+                if (ann.HighlightRectsPt.Count > 0)
+                {
+                    foreach (var hr in ann.HighlightRectsPt)
+                    {
+                        var r = NormalizeRect(hr);
+                        gfx.DrawLine(pen, r.Left, r.Bottom, r.Right, r.Bottom);
+                    }
+                }
+                else
+                {
+                    gfx.DrawLine(pen, rect.Left, rect.Bottom, rect.Right, rect.Bottom);
+                }
+                break;
+            }
+            case AnnotationKind.Strikeout:
+            {
+                var color = ParseColor(ann.ColorHex, XColor.FromArgb(255, 239, 68, 68));
+                var pen = new XPen(color, Math.Max(1.2, ann.StrokeWidthPt));
+                if (ann.HighlightRectsPt.Count > 0)
+                {
+                    foreach (var hr in ann.HighlightRectsPt)
+                    {
+                        var r = NormalizeRect(hr);
+                        double y = (r.Top + r.Bottom) * 0.5;
+                        gfx.DrawLine(pen, r.Left, y, r.Right, y);
+                    }
+                }
+                else
+                {
+                    double y = (rect.Top + rect.Bottom) * 0.5;
+                    gfx.DrawLine(pen, rect.Left, y, rect.Right, y);
+                }
                 break;
             }
             case AnnotationKind.FreehandDraw:
@@ -663,19 +729,47 @@ public sealed class PdfSharpEditorService : IPdfEditorService
             (A * x + C * y + E, B * x + D * y + F);
     }
 
-    /// <summary>
-    /// Strips underlying PDF text operators/glyph strings that intersect any redaction box
-    /// so redacted text is permanently erased from the PDF content stream.
-    /// </summary>
-    private static void StripRedactedContentFromPage(PdfPage page, IReadOnlyList<PdfAnnotation> redactions)
+    private static void DrawTextEdit(XGraphics gfx, PdfTextEdit edit)
     {
-        if (redactions.Count == 0) return;
+        var rect = NormalizeRect(edit.OriginalBoundsPt);
+        double fontSize = edit.FontSizePt > 1.0 ? edit.FontSizePt : 12.0;
+        var style = (edit.IsBold, edit.IsItalic) switch
+        {
+            (true, true) => XFontStyle.BoldItalic,
+            (true, false) => XFontStyle.Bold,
+            (false, true) => XFontStyle.Italic,
+            _ => XFontStyle.Regular
+        };
+        var font = new XFont(string.IsNullOrWhiteSpace(edit.FontFamily) ? "Arial" : edit.FontFamily, fontSize, style);
+        var color = ParseColor(edit.ColorHex, XColor.FromArgb(255, 17, 24, 39));
+        var brush = new XSolidBrush(color);
+
+        string normalized = (edit.NewText ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        string[] lines = normalized.Split('\n');
+        double lineHeight = fontSize * 1.25;
+        double width = Math.Max(100.0, rect.Right - rect.Left + 200.0);
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            double y = rect.Top + i * lineHeight;
+            gfx.DrawString(
+                lines[i],
+                font,
+                brush,
+                new XRect(rect.Left, y, width, lineHeight * 1.2),
+                XStringFormats.TopLeft);
+        }
+    }
+
+    /// <summary>
+    /// Strips underlying PDF text operators/glyph strings that intersect any target box
+    /// so redacted or replaced text is permanently removed from the PDF content stream.
+    /// </summary>
+    private static void StripRegionsFromPage(PdfPage page, IReadOnlyList<PdfRect> normRedactions)
+    {
+        if (normRedactions.Count == 0) return;
 
         double pageHeightPt = page.Height.Point;
-        var normRedactions = redactions
-            .Select(r => NormalizeRect(r.BoundsPt))
-            .Select(r => new PdfRect(r.Left - 2.0, r.Top - 2.0, r.Right + 2.0, r.Bottom + 2.0))
-            .ToList();
 
         CSequence sequence;
         try
@@ -785,12 +879,14 @@ public sealed class PdfSharpEditorService : IPdfEditorService
                     if (op.Operands.Count > strIdx && op.Operands[strIdx] is CString cStr)
                     {
                         var combined = inText ? Matrix2D.Multiply(tm, ctm) : ctm;
-                        string cleaned = FilterStringForRedactions(cStr, combined, fontSize, pageHeightPt, normRedactions, out bool allRemoved, out _);
+                        string cleaned = FilterStringForRedactions(cStr, combined, fontSize, pageHeightPt, normRedactions, out bool allRemoved, out int origGlyphCount);
                         if (!allRemoved)
                         {
                             cStr.Value = cleaned;
                             filtered.Add(op);
                         }
+                        double adv = origGlyphCount * (fontSize > 0 ? fontSize : 12.0) * 0.55;
+                        tm = Matrix2D.Multiply(new Matrix2D(1, 0, 0, 1, adv, 0), tm);
                     }
                     else
                     {
@@ -803,12 +899,14 @@ public sealed class PdfSharpEditorService : IPdfEditorService
                     if (op.Operands.Count >= 1 && op.Operands[0] is CString cStr)
                     {
                         var combined = inText ? Matrix2D.Multiply(tm, ctm) : ctm;
-                        string cleaned = FilterStringForRedactions(cStr, combined, fontSize, pageHeightPt, normRedactions, out bool allRemoved, out _);
+                        string cleaned = FilterStringForRedactions(cStr, combined, fontSize, pageHeightPt, normRedactions, out bool allRemoved, out int origGlyphCount);
                         if (!allRemoved)
                         {
                             cStr.Value = cleaned;
                             filtered.Add(op);
                         }
+                        double adv = origGlyphCount * (fontSize > 0 ? fontSize : 12.0) * 0.55;
+                        tm = Matrix2D.Multiply(new Matrix2D(1, 0, 0, 1, adv, 0), tm);
                     }
                     else
                     {
@@ -842,6 +940,7 @@ public sealed class PdfSharpEditorService : IPdfEditorService
                                 xOffset -= (ci.Value / 1000.0) * (fontSize > 0 ? fontSize : 12.0);
                             }
                         }
+                        tm = Matrix2D.Multiply(new Matrix2D(1, 0, 0, 1, xOffset, 0), tm);
                         if (anyKept)
                         {
                             filtered.Add(op);

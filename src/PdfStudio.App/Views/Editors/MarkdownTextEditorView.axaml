@@ -1,0 +1,145 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ae="using:AvaloniaEdit"
+             xmlns:vm="using:PdfStudio.App.ViewModels"
+             x:Class="PdfStudio.App.Views.Editors.MarkdownTextEditorView"
+             x:DataType="vm:MarkdownTextWorkspaceViewModel"
+             Background="{DynamicResource CanvasBackgroundBrush}">
+  <Grid RowDefinitions="40,*">
+    <!-- Editor / Split Preview / Clean Reader Header Pill & Tools -->
+    <Border Grid.Row="0"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource HairlineBorderBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="14,0">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <!-- Markdown Mode Segmented Pill -->
+        <Border Grid.Column="0"
+                IsVisible="{Binding IsMarkdownFile}"
+                Background="{DynamicResource PanelSubtleBackgroundBrush}"
+                BorderBrush="{DynamicResource HairlineBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="7"
+                Padding="2"
+                VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="2">
+            <Button Command="{Binding SetEditorModeCommand}"
+                    Classes="linear-ghost"
+                    Classes.active="{Binding IsEditorMode}"
+                    Height="24"
+                    Padding="10,0">
+              <TextBlock Text="Editor" FontSize="11.5" FontWeight="SemiBold" />
+            </Button>
+            <Button Command="{Binding SetSplitPreviewModeCommand}"
+                    Classes="linear-ghost"
+                    Classes.active="{Binding IsSplitMode}"
+                    Height="24"
+                    Padding="10,0">
+              <TextBlock Text="Split Preview" FontSize="11.5" FontWeight="SemiBold" />
+            </Button>
+            <Button Command="{Binding SetCleanReaderModeCommand}"
+                    Classes="linear-ghost"
+                    Classes.active="{Binding IsReaderMode}"
+                    Height="24"
+                    Padding="10,0">
+              <TextBlock Text="Clean Reader" FontSize="11.5" FontWeight="SemiBold" />
+            </Button>
+          </StackPanel>
+        </Border>
+
+        <!-- Quick Replace Bar -->
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="6"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+          <TextBox x:Name="FindBox"
+                   Text="{Binding FindQuery, Mode=TwoWay}"
+                   Width="150"
+                   Height="26"
+                   FontSize="11.5"
+                   PlaceholderText="Find in text…"
+                   KeyDown="OnFindBoxKeyDown" />
+          <TextBox Text="{Binding ReplaceText, Mode=TwoWay}"
+                   Width="140"
+                   Height="26"
+                   FontSize="11.5"
+                   PlaceholderText="Replace with…" />
+          <Button Content="Replace"
+                  Classes="linear-ghost"
+                  Height="26"
+                  Padding="8,0"
+                  FontSize="11.5"
+                  Click="OnReplaceClick" />
+          <Button Content="All"
+                  Classes="linear-ghost"
+                  Height="26"
+                  Padding="8,0"
+                  FontSize="11.5"
+                  Click="OnReplaceAllClick" />
+          <TextBlock Text="{Binding SearchStatusLabel}"
+                     FontSize="11"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Command="{Binding ToggleWordWrapCommand}"
+                  Classes="linear-ghost"
+                  Classes.active="{Binding WordWrap}"
+                  Height="26"
+                  Padding="10,0">
+            <TextBlock Text="Word Wrap" FontSize="11.5" />
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Main Editor + Optional Markdown Preview -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+
+      <!-- AvaloniaEdit Code & Text Surface -->
+      <Border Grid.Column="0"
+              x:Name="EditorContainer"
+              IsVisible="{Binding ShowEditorPane}"
+              Background="{DynamicResource FloatingToolbarBrush}">
+        <ae:TextEditor x:Name="CodeEditor"
+                       ShowLineNumbers="True"
+                       WordWrap="{Binding WordWrap}"
+                       FontFamily="Cascadia Mono, Consolas, Courier New, monospace"
+                       FontSize="13"
+                       Padding="12,12,12,84"
+                       Background="Transparent"
+                       Foreground="{DynamicResource TextPrimaryBrush}" />
+      </Border>
+
+      <!-- Splitter Divider -->
+      <Border Grid.Column="1"
+              Width="1"
+              Background="{DynamicResource HairlineBorderBrush}"
+              IsVisible="{Binding IsSplitMode}" />
+
+      <!-- Theme-Aware Live Markdown Reader -->
+      <ScrollViewer x:Name="PreviewScroll"
+                    Grid.Column="2"
+                    IsVisible="{Binding ShowPreviewPane}"
+                    Background="{DynamicResource CanvasBackgroundBrush}"
+                    Padding="28,24,28,84">
+        <Border MaxWidth="820"
+                HorizontalAlignment="Stretch"
+                Background="{DynamicResource FloatingToolbarBrush}"
+                BorderBrush="{DynamicResource HairlineBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="40,32">
+          <StackPanel x:Name="PreviewHost" Spacing="10" />
+        </Border>
+      </ScrollViewer>
+    </Grid>
+  </Grid>
+</UserControl>

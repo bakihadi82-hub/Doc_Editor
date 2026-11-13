@@ -94,6 +94,65 @@
     <Setter Property="BorderBrush" Value="{DynamicResource FloatingBorderBrush}" />
   </Style>
 
+  <!-- Browser-Style Integrated Titlebar Tabs -->
+  <Style Selector="Border.browser-tab">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="1,1,1,0" />
+    <Setter Property="CornerRadius" Value="8,8,0,0" />
+    <Setter Property="Padding" Value="8,4" />
+    <Setter Property="MinWidth" Value="120" />
+    <Setter Property="MaxWidth" Value="230" />
+    <Setter Property="Height" Value="33" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.14" />
+        <BrushTransition Property="BorderBrush" Duration="0:0:0.14" />
+      </Transitions>
+    </Setter>
+  </Style>
+  <Style Selector="Border.browser-tab:pointerover">
+    <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+  </Style>
+  <Style Selector="Border.browser-tab.active">
+    <Setter Property="Background" Value="{DynamicResource FloatingToolbarBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource HairlineBorderBrush}" />
+  </Style>
+  <Style Selector="Border.browser-tab.pinned">
+    <Setter Property="MinWidth" Value="108" />
+    <Setter Property="MaxWidth" Value="150" />
+  </Style>
+  <Style Selector="Border.browser-tab Button.tab-close-btn">
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+  </Style>
+  <Style Selector="Border.browser-tab.active Button.tab-close-btn">
+    <Setter Property="Opacity" Value="0.72" />
+    <Setter Property="IsHitTestVisible" Value="True" />
+  </Style>
+  <Style Selector="Border.browser-tab:pointerover Button.tab-close-btn">
+    <Setter Property="Opacity" Value="1" />
+    <Setter Property="IsHitTestVisible" Value="True" />
+  </Style>
+  <Style Selector="Border.browser-tab.dirty Button.tab-close-btn">
+    <Setter Property="Opacity" Value="0" />
+    <Setter Property="IsHitTestVisible" Value="False" />
+  </Style>
+  <Style Selector="Border.browser-tab.dirty:pointerover Button.tab-close-btn">
+    <Setter Property="Opacity" Value="1" />
+    <Setter Property="IsHitTestVisible" Value="True" />
+  </Style>
+  <Style Selector="Border.browser-tab Ellipse.tab-dirty-dot">
+    <Setter Property="Opacity" Value="1" />
+  </Style>
+  <Style Selector="Border.browser-tab:pointerover Ellipse.tab-dirty-dot">
+    <Setter Property="Opacity" Value="0" />
+  </Style>
+  <Style Selector="Border.selected-block">
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="Background" Value="{DynamicResource AccentSubtleBrush}" />
+  </Style>
+
   <!-- Save Pill Button (subtle when clean, primary accent pill when dirty) -->
   <Style Selector="Button.save-pill">
     <Setter Property="Background" Value="{DynamicResource PanelSubtleBackgroundBrush}" />
@@ -148,10 +207,10 @@
     <Setter Property="VerticalContentAlignment" Value="Center" />
   </Style>
 
-  <!-- Windows Caption Button (36px height) -->
+  <!-- Windows Caption Button (40px height) -->
   <Style Selector="Button.caption-btn">
     <Setter Property="Width" Value="42" />
-    <Setter Property="Height" Value="36" />
+    <Setter Property="Height" Value="40" />
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
     <Setter Property="BorderThickness" Value="0" />

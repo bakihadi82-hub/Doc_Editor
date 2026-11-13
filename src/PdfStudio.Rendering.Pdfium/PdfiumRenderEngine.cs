@@ -283,6 +283,135 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
         }, RenderPriority.VisibleViewport, ct);
     }
 
+    public Task<PdfPageTextLayout> GetPageTextLayoutAsync(int pageIndex, int rotationQuarterTurns = 0, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        return _worker.EnqueueAsync(() =>
+        {
+            if (_documentHandle is null || _documentHandle.IsInvalid)
+            {
+                return new PdfPageTextLayout(pageIndex, 612, 792, []);
+            }
+
+            nint doc = _documentHandle.DangerousGetHandle();
+            PdfiumNative.FPDF_GetPageSizeByIndexF(doc, pageIndex, out var size);
+            double w0 = size.Width > 0 ? size.Width : 612.0;
+            double h0 = size.Height > 0 ? size.Height : 792.0;
+            int rot = ((rotationQuarterTurns % 4) + 4) % 4;
+            double effW = rot % 2 != 0 ? h0 : w0;
+            double effH = rot % 2 != 0 ? w0 : h0;
+
+            nint rawPage = PdfiumNative.FPDF_LoadPage(doc, pageIndex);
+            if (rawPage == 0) return new PdfPageTextLayout(pageIndex, effW, effH, []);
+            using var page = new SafePdfPageHandle(rawPage);
+
+            nint rawText = PdfiumNative.FPDFText_LoadPage(rawPage);
+            if (rawText == 0) return new PdfPageTextLayout(pageIndex, effW, effH, []);
+            using var textPage = new SafePdfTextPageHandle(rawText);
+
+            int count = PdfiumNative.FPDFText_CountChars(rawText);
+            if (count <= 0) return new PdfPageTextLayout(pageIndex, effW, effH, []);
+
+            var chars = new List<PdfTextChar>(count);
+            byte[] fontBuf = new byte[128];
+
+            for (int i = 0; i < count; i++)
+            {
+                uint uni = PdfiumNative.FPDFText_GetUnicode(rawText, i);
+                char ch = uni <= char.MaxValue ? (char)uni : '\0';
+
+                double fontSize = PdfiumNative.FPDFText_GetFontSize(rawText, i);
+                if (fontSize <= 0.1 || double.IsNaN(fontSize)) fontSize = 12.0;
+
+                string fontName = "Arial";
+                bool isBold = false;
+                bool isItalic = false;
+                unsafe
+                {
+                    fixed (byte* fPtr = fontBuf)
+                    {
+                        uint len = PdfiumNative.FPDFText_GetFontInfo(rawText, i, (nint)fPtr, (uint)fontBuf.Length, out int flags);
+                        if (len > 1)
+                        {
+                            int strLen = Math.Min((int)len - 1, fontBuf.Length - 1);
+                            fontName = System.Text.Encoding.ASCII.GetString(fontBuf, 0, strLen);
+                        }
+                        isBold = (flags & (1 << 18)) != 0 || fontName.Contains("Bold", StringComparison.OrdinalIgnoreCase);
+                        isItalic = (flags & (1 << 6)) != 0 || fontName.Contains("Italic", StringComparison.OrdinalIgnoreCase) || fontName.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+
+                if (PdfiumNative.FPDFText_GetCharBox(rawText, i, out double l, out double r, out double b, out double t) != 0)
+                {
+                    double x0 = Math.Min(l, r);
+                    double x1 = Math.Max(l, r);
+                    double y0 = h0 - Math.Max(b, t);
+                    double y1 = h0 - Math.Min(b, t);
+
+                    (double dl, double dt, double dr, double db) = rot switch
+                    {
+                        1 => (h0 - y1, x0, h0 - y0, x1),
+                        2 => (w0 - x1, h0 - y1, w0 - x0, h0 - y0),
+                        3 => (y0, w0 - x1, y1, w0 - x0),
+                        _ => (x0, y0, x1, y1)
+                    };
+
+                    chars.Add(new PdfTextChar(
+                        i,
+                        ch,
+                        Math.Min(dl, dr),
+                        Math.Min(dt, db),
+                        Math.Max(dl, dr),
+                        Math.Max(dt, db),
+                        fontSize,
+                        fontName,
+                        isBold,
+                        isItalic));
+                }
+                else
+                {
+                    chars.Add(new PdfTextChar(i, ch, 0, 0, 0, 0, fontSize, fontName, isBold, isItalic));
+                }
+            }
+
+            return new PdfPageTextLayout(pageIndex, effW, effH, chars);
+        }, RenderPriority.VisibleViewport, ct);
+    }
+
+    public Task<int> GetCharIndexAtPosAsync(
+        int pageIndex,
+        double xPdfPt,
+        double yPdfPt,
+        double xTolerance = 6.0,
+        double yTolerance = 6.0,
+        CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        return _worker.EnqueueAsync(() =>
+        {
+            if (_documentHandle is null || _documentHandle.IsInvalid)
+            {
+                return -1;
+            }
+
+            nint doc = _documentHandle.DangerousGetHandle();
+            PdfiumNative.FPDF_GetPageSizeByIndexF(doc, pageIndex, out var size);
+            double h0 = size.Height > 0 ? size.Height : 792.0;
+
+            nint rawPage = PdfiumNative.FPDF_LoadPage(doc, pageIndex);
+            if (rawPage == 0) return -1;
+            using var page = new SafePdfPageHandle(rawPage);
+
+            nint rawText = PdfiumNative.FPDFText_LoadPage(rawPage);
+            if (rawText == 0) return -1;
+            using var textPage = new SafePdfTextPageHandle(rawText);
+
+            return PdfiumNative.FPDFText_GetCharIndexAtPos(rawText, xPdfPt, h0 - yPdfPt, xTolerance, yTolerance);
+        }, RenderPriority.VisibleViewport, ct);
+    }
+
     private static List<PdfOutlineNode> ReadBookmarkSiblings(nint doc, nint parentBookmark)
     {
         var nodes = new List<PdfOutlineNode>();

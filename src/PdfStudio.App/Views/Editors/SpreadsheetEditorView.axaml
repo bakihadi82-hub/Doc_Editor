@@ -1,0 +1,79 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PdfStudio.App.ViewModels"
+             x:Class="PdfStudio.App.Views.Editors.SpreadsheetEditorView"
+             x:DataType="vm:SpreadsheetWorkspaceViewModel"
+             Background="{DynamicResource CanvasBackgroundBrush}">
+  <Grid RowDefinitions="*,36">
+    <!-- Virtualized high-speed DataGrid -->
+    <DataGrid x:Name="SheetGrid"
+              Grid.Row="0"
+              ItemsSource="{Binding ActiveSheet.Rows}"
+              SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+              AutoGenerateColumns="False"
+              CanUserReorderColumns="False"
+              CanUserResizeColumns="True"
+              CanUserSortColumns="True"
+              IsReadOnly="False"
+              SelectionMode="Single"
+              HeadersVisibility="All"
+              GridLinesVisibility="All"
+              RowHeight="28"
+              ColumnHeaderHeight="30"
+              Background="{DynamicResource FloatingToolbarBrush}"
+              Foreground="{DynamicResource TextPrimaryBrush}"
+              BorderThickness="0"
+              FontSize="12.5" />
+
+    <!-- Bottom Worksheet Strip -->
+    <Border Grid.Row="1"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource HairlineBorderBrush}"
+            BorderThickness="0,1,0,0"
+            Padding="10,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <ScrollViewer Grid.Column="0"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Disabled">
+          <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+            <ItemsControl ItemsSource="{Binding Sheets}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal" Spacing="4" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SpreadsheetSheetViewModel">
+                  <Button Command="{Binding $parent[UserControl].((vm:SpreadsheetWorkspaceViewModel)DataContext).SelectSheetCommand}"
+                          CommandParameter="{Binding}"
+                          Classes="linear-ghost"
+                          Classes.active="{Binding IsActive}"
+                          Height="26"
+                          Padding="10,0">
+                    <TextBlock Text="{Binding Name}" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Button Command="{Binding AddSheetCommand}"
+                    ToolTip.Tip="Add Worksheet"
+                    Classes="linear-ghost"
+                    Width="26"
+                    Height="26"
+                    Padding="0">
+              <TextBlock Text="+" FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Button>
+          </StackPanel>
+        </ScrollViewer>
+
+        <TextBlock Grid.Column="1"
+                   Text="{Binding ContextStatusText}"
+                   FontSize="11.5"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   VerticalAlignment="Center"
+                   Margin="12,0,4,0" />
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
