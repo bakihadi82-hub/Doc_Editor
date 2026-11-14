@@ -516,7 +516,11 @@
             </StackPanel>
           </Border>
 
-          <ScrollViewer Grid.Row="2" Padding="12">
+          <ScrollViewer x:Name="ThumbnailScrollViewer"
+                        Grid.Row="2"
+                        Padding="12"
+                        ScrollChanged="ThumbnailScrollViewer_OnScrollChanged"
+                        SizeChanged="ThumbnailScrollViewer_OnSizeChanged">
             <StackPanel Spacing="8">
               <StackPanel IsVisible="{Binding IsPagesTabActive}" Spacing="8">
                 <ItemsControl x:Name="ThumbnailItemsControl"
@@ -1327,6 +1331,13 @@
                       Command="{Binding FitToPageCommand}"
                       ToolTip.Tip="Fit Page (Alt+2)">
                 <Path Classes="icon-stroke" Data="{StaticResource IconFitPage}" />
+              </Button>
+              <Button x:Name="PdfDarkInvertButton"
+                      Classes="linear-ghost icon-btn"
+                      Classes.active="{Binding IsPdfDarkInvertEnabled}"
+                      Command="{Binding TogglePdfDarkInvertCommand}"
+                      ToolTip.Tip="Dark Mode Content Inversion">
+                <Path Classes="icon-stroke" Data="{StaticResource IconMoon}" />
               </Button>
 
               <Border Width="1" Height="16" Background="{DynamicResource HairlineBorderBrush}" Margin="5,0" />

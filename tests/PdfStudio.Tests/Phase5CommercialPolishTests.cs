@@ -299,5 +299,79 @@ public sealed class Phase5CommercialPolishTests
             if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [AvaloniaFact]
+    public async Task VirtualizedThumbnails_LoadVisibleWindowOnly_AndRespectLruBudget()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"PdfStudioThumbLru_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        string settingsPath = Path.Combine(tempDir, "settings.json");
+
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            string pdfPath = CreateMultiPageTextPdf(
+                Path.Combine(tempDir, "FortyPages.pdf"),
+                Enumerable.Range(1, 40).Select(i => $"Page {i}").ToArray());
+
+            await using var engine = new PdfiumRenderEngine();
+            var vm = new MainWindowViewModel(engine, settingsFilePath: settingsPath)
+            {
+                MaxCachedThumbnails = 15
+            };
+
+            await vm.LoadFileAsync(pdfPath);
+            Assert.Equal(40, vm.PageThumbnails.Count);
+
+            // Wait for the initial visible window (pages 0..5) to render.
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline &&
+                   Enumerable.Range(0, MainWindowViewModel.DefaultVisibleThumbnailCount)
+                       .Any(i => vm.PageThumbnails[i].ThumbnailBitmap is null))
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(25, ct);
+            }
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            for (int i = 0; i < MainWindowViewModel.DefaultVisibleThumbnailCount; i++)
+            {
+                Assert.NotNull(vm.PageThumbnails[i].ThumbnailBitmap);
+            }
+
+            // Off-screen tail pages must remain unrendered until scrolled into view.
+            for (int i = 25; i < 40; i++)
+            {
+                Assert.Null(vm.PageThumbnails[i].ThumbnailBitmap);
+            }
+
+            // Scroll viewport to pages 28..33 -> cancels off-screen work and evicts LRU entries past MaxCachedThumbnails (15).
+            vm.UpdateThumbnailViewport(28, 33);
+
+            deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline &&
+                   Enumerable.Range(28, 6).Any(i => vm.PageThumbnails[i].ThumbnailBitmap is null))
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(25, ct);
+            }
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+            for (int i = 28; i <= 33; i++)
+            {
+                Assert.NotNull(vm.PageThumbnails[i].ThumbnailBitmap);
+            }
+
+            int populatedCount = vm.PageThumbnails.Count(t => t.ThumbnailBitmap is not null);
+            Assert.True(populatedCount <= vm.MaxCachedThumbnails,
+                $"Expected at most {vm.MaxCachedThumbnails} cached thumbnails, found {populatedCount}.");
+            Assert.True(vm.CachedThumbnailCount <= vm.MaxCachedThumbnails);
+            Assert.Null(vm.PageThumbnails[0].ThumbnailBitmap);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }
 

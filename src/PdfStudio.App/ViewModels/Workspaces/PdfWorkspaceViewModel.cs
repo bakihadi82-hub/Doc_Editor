@@ -30,6 +30,13 @@ public sealed class PdfWorkspaceViewModel : DocumentTabViewModel
     public Dictionary<int, PdfPageTextLayout> TextLayoutCache { get; } = new();
     public PdfTextSelectionSpan? ActiveSelection { get; set; }
 
+    private bool _isDarkInvertEnabled;
+    public bool IsDarkInvertEnabled
+    {
+        get => _isDarkInvertEnabled;
+        set => SetProperty(ref _isDarkInvertEnabled, value);
+    }
+
     public override bool CanUndo => UndoStack.Count > 0;
     public override bool CanRedo => RedoStack.Count > 0;
 

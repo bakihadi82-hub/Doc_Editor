@@ -10,19 +10,31 @@ namespace PdfStudio.App.ViewModels;
 public sealed class SpreadsheetRowViewModel : ObservableObject
 {
     private readonly List<string> _cells;
+    private readonly List<SpreadsheetCellMetadata?> _metadata;
     private readonly Action? _onCellEdited;
 
-    public SpreadsheetRowViewModel(IEnumerable<string> values, int minColumns, Action? onCellEdited = null)
+    public SpreadsheetRowViewModel(
+        IEnumerable<string> values,
+        int minColumns,
+        Action? onCellEdited = null,
+        IEnumerable<SpreadsheetCellMetadata?>? metadata = null)
     {
         _cells = [.. values];
-        while (_cells.Count < minColumns)
+        _metadata = metadata is not null ? metadata.Select(m => m?.Clone()).ToList() : [];
+        int targetCols = Math.Max(minColumns, _cells.Count);
+        while (_cells.Count < targetCols)
         {
             _cells.Add(string.Empty);
+        }
+        while (_metadata.Count < _cells.Count)
+        {
+            _metadata.Add(null);
         }
         _onCellEdited = onCellEdited;
     }
 
     public int CellCount => _cells.Count;
+    public bool HasFormulaCell => _metadata.Any(m => m?.FormulaText is not null);
 
     public string this[int index]
     {
@@ -30,7 +42,15 @@ public sealed class SpreadsheetRowViewModel : ObservableObject
         set
         {
             if (index < 0) return;
-            while (_cells.Count <= index) _cells.Add(string.Empty);
+            while (_cells.Count <= index)
+            {
+                _cells.Add(string.Empty);
+                _metadata.Add(null);
+            }
+            while (_metadata.Count <= index)
+            {
+                _metadata.Add(null);
+            }
             string next = value ?? string.Empty;
             if (!string.Equals(_cells[index], next, StringComparison.Ordinal))
             {
@@ -45,6 +65,8 @@ public sealed class SpreadsheetRowViewModel : ObservableObject
     {
         int clamped = Math.Clamp(index, 0, _cells.Count);
         _cells.Insert(clamped, value);
+        while (_metadata.Count < _cells.Count - 1) _metadata.Add(null);
+        _metadata.Insert(Math.Clamp(clamped, 0, _metadata.Count), null);
         OnPropertyChanged("Item[]");
     }
 
@@ -53,6 +75,10 @@ public sealed class SpreadsheetRowViewModel : ObservableObject
         if (index >= 0 && index < _cells.Count)
         {
             _cells.RemoveAt(index);
+            if (index < _metadata.Count)
+            {
+                _metadata.RemoveAt(index);
+            }
             OnPropertyChanged("Item[]");
         }
     }
@@ -63,12 +89,18 @@ public sealed class SpreadsheetRowViewModel : ObservableObject
         while (_cells.Count < count)
         {
             _cells.Add(string.Empty);
+            _metadata.Add(null);
             changed = true;
+        }
+        while (_metadata.Count < _cells.Count)
+        {
+            _metadata.Add(null);
         }
         if (changed) OnPropertyChanged("Item[]");
     }
 
     public List<string> ToList() => [.. _cells];
+    public List<SpreadsheetCellMetadata?> ToMetadataList() => _metadata.Select(m => m?.Clone()).ToList();
 }
 
 public sealed partial class SpreadsheetSheetViewModel : ObservableObject
@@ -85,16 +117,25 @@ public sealed partial class SpreadsheetSheetViewModel : ObservableObject
     private int _columnCount;
 
     public ObservableCollection<SpreadsheetRowViewModel> Rows { get; } = [];
+    public List<SpreadsheetColumnWidth> ColumnWidths { get; } = [];
+    public bool FormulaMutated { get; set; }
 
     public SpreadsheetSheetViewModel(SpreadsheetSheetData data, Action onEdited)
     {
         _name = data.Name;
         _onEdited = onEdited;
         _columnCount = Math.Max(1, data.ColumnCount);
+        FormulaMutated = data.FormulaMutated;
 
-        foreach (var row in data.Rows)
+        foreach (var cw in data.ColumnWidths)
         {
-            Rows.Add(new SpreadsheetRowViewModel(row, _columnCount, onEdited));
+            ColumnWidths.Add(cw.Clone());
+        }
+
+        for (int i = 0; i < data.Rows.Count; i++)
+        {
+            var metaRow = i < data.CellMetadata.Count ? data.CellMetadata[i] : null;
+            Rows.Add(new SpreadsheetRowViewModel(data.Rows[i], _columnCount, onEdited, metaRow));
         }
 
         if (Rows.Count == 0)
@@ -103,12 +144,31 @@ public sealed partial class SpreadsheetSheetViewModel : ObservableObject
         }
     }
 
+    public bool HasAnyFormula => Rows.Any(r => r.HasFormulaCell);
+
+    public double? GetColumnWidthPixels(int colIdx)
+    {
+        uint oneBased = (uint)(colIdx + 1);
+        var match = ColumnWidths.FirstOrDefault(w => oneBased >= w.Min && oneBased <= w.Max && w.Width > 0);
+        if (match is null) return null;
+        return Math.Clamp(match.Width * 7.5 + 12.0, 48.0, 480.0);
+    }
+
     public SpreadsheetSheetData ToData()
     {
-        var data = new SpreadsheetSheetData { Name = Name };
+        var data = new SpreadsheetSheetData
+        {
+            Name = Name,
+            FormulaMutated = FormulaMutated
+        };
+        foreach (var cw in ColumnWidths)
+        {
+            data.ColumnWidths.Add(cw.Clone());
+        }
         foreach (var row in Rows)
         {
             data.Rows.Add(row.ToList());
+            data.CellMetadata.Add(row.ToMetadataList());
         }
         return data;
     }
@@ -118,9 +178,11 @@ public sealed record SpreadsheetCellMatch(int SheetIndex, int RowIndex, int Colu
 
 public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
 {
+    private byte[]? _originalPackageBytes;
     private readonly Stack<SpreadsheetWorkbookData> _undoStack = new();
     private readonly Stack<SpreadsheetWorkbookData> _redoStack = new();
     private bool _suppressCellEditUndo;
+    private bool _syncingSearchQuery;
     private readonly List<SpreadsheetCellMatch> _searchMatches = [];
     private int _activeSearchMatchIndex = -1;
     private int _lastSortedColumn = -1;
@@ -139,6 +201,12 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
 
     [ObservableProperty]
     private SpreadsheetRowViewModel? _selectedRow;
+
+    [ObservableProperty]
+    private string _findQuery = string.Empty;
+
+    [ObservableProperty]
+    private string _replaceText = string.Empty;
 
     [ObservableProperty]
     private string _searchStatusLabel = "0 of 0";
@@ -183,6 +251,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
         _suppressCellEditUndo = true;
         try
         {
+            _originalPackageBytes = data.OriginalPackageBytes;
             Sheets.Clear();
             foreach (var sheet in data.Sheets)
             {
@@ -203,7 +272,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
 
     public SpreadsheetWorkbookData BuildWorkbookData()
     {
-        var wb = new SpreadsheetWorkbookData();
+        var wb = new SpreadsheetWorkbookData { OriginalPackageBytes = _originalPackageBytes };
         foreach (var s in Sheets)
         {
             wb.Sheets.Add(s.ToData());
@@ -283,6 +352,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
         int insertAt = SelectedRowIndex >= 0 && SelectedRowIndex < ActiveSheet.Rows.Count
             ? SelectedRowIndex + 1
             : ActiveSheet.Rows.Count;
+        if (ActiveSheet.HasAnyFormula) ActiveSheet.FormulaMutated = true;
         _suppressCellEditUndo = true;
         ActiveSheet.Rows.Insert(insertAt, new SpreadsheetRowViewModel([], ActiveSheet.ColumnCount, OnCellEdited));
         _suppressCellEditUndo = false;
@@ -299,6 +369,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
         int insertAt = SelectedRowIndex >= 0 && SelectedRowIndex < ActiveSheet.Rows.Count
             ? SelectedRowIndex
             : 0;
+        if (ActiveSheet.HasAnyFormula) ActiveSheet.FormulaMutated = true;
         _suppressCellEditUndo = true;
         ActiveSheet.Rows.Insert(insertAt, new SpreadsheetRowViewModel([], ActiveSheet.ColumnCount, OnCellEdited));
         _suppressCellEditUndo = false;
@@ -315,6 +386,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
             ? SelectedRowIndex
             : ActiveSheet.Rows.Count - 1;
         PushUndoSnapshot();
+        if (ActiveSheet.HasAnyFormula) ActiveSheet.FormulaMutated = true;
         ActiveSheet.Rows.RemoveAt(idx);
         SelectedRowIndex = Math.Clamp(idx, 0, ActiveSheet.Rows.Count - 1);
         IsDirty = true;
@@ -326,6 +398,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
     {
         if (ActiveSheet is null) return;
         PushUndoSnapshot();
+        if (ActiveSheet.HasAnyFormula) ActiveSheet.FormulaMutated = true;
         int colIdx = Math.Clamp(SelectedColumnIndex + 1, 0, ActiveSheet.ColumnCount);
         foreach (var row in ActiveSheet.Rows)
         {
@@ -344,6 +417,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
         if (ActiveSheet is null || ActiveSheet.ColumnCount <= 1) return;
         int colIdx = Math.Clamp(SelectedColumnIndex, 0, ActiveSheet.ColumnCount - 1);
         PushUndoSnapshot();
+        if (ActiveSheet.HasAnyFormula) ActiveSheet.FormulaMutated = true;
         foreach (var row in ActiveSheet.Rows)
         {
             row.RemoveCellAt(colIdx);
@@ -375,6 +449,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
         if (ActiveSheet is null || ActiveSheet.Rows.Count <= 1) return;
         int col = Math.Clamp(columnIndex ?? SelectedColumnIndex, 0, Math.Max(0, ActiveSheet.ColumnCount - 1));
         PushUndoSnapshot();
+        if (ActiveSheet.HasAnyFormula) ActiveSheet.FormulaMutated = true;
 
         // Keep row 0 as header if it contains non-numeric text and subsequent rows exist, or sort rows 1..N when row 0 looks like header
         bool preserveHeader = ActiveSheet.Rows.Count > 1 &&
@@ -416,12 +491,34 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
     [RelayCommand]
     private void BeginCellEdit() => RequestBeginCellEdit?.Invoke();
 
+    partial void OnFindQueryChanged(string value)
+    {
+        if (!_syncingSearchQuery)
+        {
+            RunSearch(value);
+        }
+    }
+
     public void RunSearch(string query)
     {
+        string normalized = query ?? string.Empty;
+        if (!string.Equals(FindQuery, normalized, StringComparison.Ordinal))
+        {
+            _syncingSearchQuery = true;
+            try
+            {
+                FindQuery = normalized;
+            }
+            finally
+            {
+                _syncingSearchQuery = false;
+            }
+        }
+
         _searchMatches.Clear();
         _activeSearchMatchIndex = -1;
 
-        if (!string.IsNullOrWhiteSpace(query))
+        if (!string.IsNullOrWhiteSpace(normalized))
         {
             for (int s = 0; s < Sheets.Count; s++)
             {
@@ -431,7 +528,7 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
                     var row = sheet.Rows[r];
                     for (int c = 0; c < sheet.ColumnCount; c++)
                     {
-                        if (row[c].Contains(query, StringComparison.OrdinalIgnoreCase))
+                        if (row[c].Contains(normalized, StringComparison.OrdinalIgnoreCase))
                         {
                             _searchMatches.Add(new SpreadsheetCellMatch(s, r, c));
                         }
@@ -464,9 +561,113 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
 
     public void ClearSearch()
     {
+        _syncingSearchQuery = true;
+        try
+        {
+            FindQuery = string.Empty;
+        }
+        finally
+        {
+            _syncingSearchQuery = false;
+        }
         _searchMatches.Clear();
         _activeSearchMatchIndex = -1;
         SearchStatusLabel = "0 of 0";
+    }
+
+    [RelayCommand]
+    private void ReplaceCurrent() => ReplaceCurrentMatch();
+
+    [RelayCommand]
+    private void ReplaceAll() => ReplaceAllMatches();
+
+    public void ReplaceCurrentMatch(string? query = null)
+    {
+        string effectiveQuery = string.IsNullOrWhiteSpace(query) ? FindQuery : query;
+        if (string.IsNullOrWhiteSpace(effectiveQuery)) return;
+
+        if (_searchMatches.Count == 0)
+        {
+            RunSearch(effectiveQuery);
+            if (_searchMatches.Count == 0) return;
+        }
+
+        int matchIdx = Math.Clamp(_activeSearchMatchIndex, 0, _searchMatches.Count - 1);
+        var match = _searchMatches[matchIdx];
+        if (match.SheetIndex < 0 || match.SheetIndex >= Sheets.Count) return;
+
+        var sheet = Sheets[match.SheetIndex];
+        if (match.RowIndex < 0 || match.RowIndex >= sheet.Rows.Count) return;
+
+        var row = sheet.Rows[match.RowIndex];
+        if (!TextReplaceUtility.TryReplaceFirst(row[match.ColumnIndex], effectiveQuery, ReplaceText, out string updated))
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suppressCellEditUndo = true;
+        try
+        {
+            row[match.ColumnIndex] = updated;
+        }
+        finally
+        {
+            _suppressCellEditUndo = false;
+        }
+
+        IsDirty = true;
+        NotifyUndoRedo();
+        UpdateMetadataBadges();
+        RunSearch(effectiveQuery);
+    }
+
+    public int ReplaceAllMatches(string? query = null)
+    {
+        string effectiveQuery = string.IsNullOrWhiteSpace(query) ? FindQuery : query;
+        if (string.IsNullOrWhiteSpace(effectiveQuery)) return 0;
+
+        int totalReplaced = 0;
+        bool pushedUndo = false;
+        _suppressCellEditUndo = true;
+        try
+        {
+            foreach (var sheet in Sheets)
+            {
+                for (int r = 0; r < sheet.Rows.Count; r++)
+                {
+                    var row = sheet.Rows[r];
+                    for (int c = 0; c < sheet.ColumnCount; c++)
+                    {
+                        string updated = TextReplaceUtility.ReplaceAll(row[c], effectiveQuery, ReplaceText, out int count);
+                        if (count > 0)
+                        {
+                            if (!pushedUndo)
+                            {
+                                PushUndoSnapshot();
+                                pushedUndo = true;
+                            }
+                            row[c] = updated;
+                            totalReplaced += count;
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _suppressCellEditUndo = false;
+        }
+
+        if (totalReplaced > 0)
+        {
+            IsDirty = true;
+            NotifyUndoRedo();
+            UpdateMetadataBadges();
+            RunSearch(effectiveQuery);
+        }
+
+        return totalReplaced;
     }
 
     private void JumpToActiveMatch()
@@ -517,6 +718,14 @@ public sealed partial class SpreadsheetWorkspaceViewModel : DocumentTabViewModel
     {
         var wb = BuildWorkbookData();
         await SpreadsheetService.SaveAtomicAsync(OriginalFilePath, targetPath, wb, ct);
+        _originalPackageBytes = wb.OriginalPackageBytes;
+        int activeIdx = ActiveSheet is not null ? Math.Max(0, Sheets.IndexOf(ActiveSheet)) : 0;
+        int prevRow = SelectedRowIndex;
+        int prevCol = SelectedColumnIndex;
+        var refreshed = await SpreadsheetService.LoadAsync(targetPath, ct);
+        ApplyWorkbookData(refreshed, activeIdx);
+        SelectedRowIndex = Math.Clamp(prevRow, -1, (ActiveSheet?.Rows.Count ?? 0) - 1);
+        SelectedColumnIndex = Math.Clamp(prevCol, 0, Math.Max(0, (ActiveSheet?.ColumnCount ?? 1) - 1));
         OriginalFilePath = targetPath;
         WorkingFilePath = targetPath;
         _undoStack.Clear();

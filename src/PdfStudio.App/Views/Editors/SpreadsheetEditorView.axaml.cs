@@ -66,11 +66,12 @@ public partial class SpreadsheetEditorView : UserControl
         for (int i = 0; i < colCount; i++)
         {
             int colIdx = i;
+            double widthPx = _vm.ActiveSheet.GetColumnWidthPixels(colIdx) ?? 120;
             var col = new DataGridTextColumn
             {
                 Header = SpreadsheetService.GetColumnLabel(colIdx),
                 Binding = new Binding($"[{colIdx}]"),
-                Width = new DataGridLength(120),
+                Width = new DataGridLength(widthPx),
                 MinWidth = 60,
                 IsReadOnly = false
             };
@@ -176,5 +177,36 @@ public partial class SpreadsheetEditorView : UserControl
             SheetGrid.CurrentColumn = col;
         }
         SheetGrid.ScrollIntoView(rowItem, col);
+    }
+
+    private void OnFindBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        var vm = _vm ?? DataContext as SpreadsheetWorkspaceViewModel;
+        if (vm is null) return;
+
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            vm.PreviousSearchMatch();
+        }
+        else
+        {
+            vm.NextSearchMatch();
+        }
+        e.Handled = true;
+    }
+
+    private void OnReplaceClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var vm = _vm ?? DataContext as SpreadsheetWorkspaceViewModel;
+        if (vm is null) return;
+        vm.ReplaceCurrentMatch(FindBox.Text ?? vm.FindQuery);
+    }
+
+    private void OnReplaceAllClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var vm = _vm ?? DataContext as SpreadsheetWorkspaceViewModel;
+        if (vm is null) return;
+        vm.ReplaceAllMatches(FindBox.Text ?? vm.FindQuery);
     }
 }

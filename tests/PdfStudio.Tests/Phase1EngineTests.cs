@@ -60,5 +60,74 @@ public sealed class Phase1EngineTests
         Assert.Equal(396, rendered.Height);
         Assert.Equal(SKColorType.Bgra8888, rendered.ColorType);
     }
+
+    [Fact]
+    public async Task PdfiumRenderEngine_OpenAsync_StreamsIntoNativeMemory_AndDisposalCancelsQueuedTasks()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"PdfStudioOpenDispose_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        string pdfPath = Path.Combine(tempDir, "large_multi.pdf");
+
+        try
+        {
+            using (var doc = new PdfDocument())
+            {
+                // Make page count >= 12 and include >300KB of stream content to exercise chunked FileStream -> NativeMemory reads.
+                string paddingComment = "% " + new string('A', 40_000) + "\n";
+                for (int i = 0; i < 12; i++)
+                {
+                    var page = doc.AddPage();
+                    page.Width = 612;
+                    page.Height = 792;
+                    var content = new PdfDictionary(doc);
+                    content.CreateStream(System.Text.Encoding.ASCII.GetBytes(paddingComment + "q Q\n"));
+                    doc.Internals.AddObject(content);
+                    page.Contents.Elements.Add(content.Reference!);
+                }
+                doc.Save(pdfPath);
+            }
+
+            Assert.True(new FileInfo(pdfPath).Length > 256 * 1024);
+
+            var engine = new PdfiumRenderEngine();
+            var ct = TestContext.Current.CancellationToken;
+            var pages = await engine.OpenAsync(pdfPath, ct: ct);
+            Assert.Equal(12, pages.Count);
+
+            using (var first = await engine.RenderPageAsync(new RenderRequest(0, 200, 260, 0, RenderPriority.VisibleViewport, ct)))
+            {
+                Assert.Equal(200, first.Width);
+                Assert.Equal(260, first.Height);
+            }
+
+            // Queue multiple lower-priority thumbnail renders, then immediately dispose engine while they wait.
+            var queuedTasks = new List<Task<SKBitmap>>();
+            for (int i = 0; i < 24; i++)
+            {
+                queuedTasks.Add(engine.RenderPageAsync(new RenderRequest(i % 12, 560, 720, 0, RenderPriority.Thumbnail, ct)));
+            }
+
+            await engine.DisposeAsync();
+
+            bool sawCanceled = false;
+            foreach (var task in queuedTasks)
+            {
+                try
+                {
+                    using var bmp = await task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    sawCanceled = true;
+                }
+            }
+
+            Assert.True(sawCanceled, "Expected at least one queued lower-priority render task to be canceled on disposal instead of hanging.");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }
 

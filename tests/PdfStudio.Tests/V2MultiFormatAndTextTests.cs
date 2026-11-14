@@ -702,4 +702,368 @@ public sealed class V2MultiFormatAndTextTests
         Assert.True(vm.CanUndo);
         Assert.True(vm.IsDirty);
     }
+
+    [Fact]
+    public async Task RichDoc_MixedRunsHyperlinksAndEmbeddedElements_PreservedOnInPlaceSave()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        string tempDir = Path.Combine(Path.GetTempPath(), $"PdfStudioDocxPreserve_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        string docxPath = Path.Combine(tempDir, "rich_mixed.docx");
+
+        try
+        {
+            using (var doc = WordprocessingDocument.Create(docxPath, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                var linkRel = main.AddHyperlinkRelationship(new Uri("https://example.com/docs"), isExternal: true);
+
+                var mixedParagraph = new Paragraph(
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.Text("Hello ") { Space = SpaceProcessingModeValues.Preserve }),
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.RunProperties(new DocumentFormat.OpenXml.Wordprocessing.Bold()),
+                        new DocumentFormat.OpenXml.Wordprocessing.Text("bold")),
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.Text(" and ") { Space = SpaceProcessingModeValues.Preserve }),
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.RunProperties(new DocumentFormat.OpenXml.Wordprocessing.Italic()),
+                        new DocumentFormat.OpenXml.Wordprocessing.Text("italic")),
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.Text(" visit ") { Space = SpaceProcessingModeValues.Preserve }),
+                    new DocumentFormat.OpenXml.Wordprocessing.Hyperlink(
+                        new DocumentFormat.OpenXml.Wordprocessing.Run(
+                            new DocumentFormat.OpenXml.Wordprocessing.RunProperties(
+                                new DocumentFormat.OpenXml.Wordprocessing.Underline { Val = DocumentFormat.OpenXml.Wordprocessing.UnderlineValues.Single }),
+                            new DocumentFormat.OpenXml.Wordprocessing.Text("portal")))
+                    {
+                        Id = linkRel.Id,
+                        History = true
+                    },
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.Text(".")));
+
+                var drawingParagraph = new Paragraph(
+                    new ParagraphProperties(new Justification { Val = JustificationValues.Center }),
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(new DocumentFormat.OpenXml.Wordprocessing.Drawing()),
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(
+                        new DocumentFormat.OpenXml.Wordprocessing.Text("Figure 1 Caption")));
+
+                var table = new DocumentFormat.OpenXml.Wordprocessing.Table(
+                    new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct }),
+                    new TableRow(
+                        new TableCell(
+                            new TableCellProperties(new Shading { Val = ShadingPatternValues.Clear, Fill = "E2E8F0" }),
+                            new Paragraph(new DocumentFormat.OpenXml.Wordprocessing.Run(
+                                new DocumentFormat.OpenXml.Wordprocessing.RunProperties(new DocumentFormat.OpenXml.Wordprocessing.Bold()),
+                                new DocumentFormat.OpenXml.Wordprocessing.Text("Key")))),
+                        new TableCell(
+                            new TableCellProperties(new Shading { Val = ShadingPatternValues.Clear, Fill = "F8FAFC" }),
+                            new Paragraph(new DocumentFormat.OpenXml.Wordprocessing.Run(
+                                new DocumentFormat.OpenXml.Wordprocessing.Text("OldValue"))))));
+
+                main.Document = new Document(new Body(mixedParagraph, drawingParagraph, table));
+                main.Document.Save();
+            }
+
+            var vm = new RichDocWorkspaceViewModel(docxPath);
+            await vm.LoadAsync(ct);
+
+            Assert.True(vm.HasUnsupportedElementsWarning);
+            Assert.NotEmpty(vm.Blocks);
+            Assert.Equal(3, vm.Blocks.Count);
+
+            var p0 = vm.Blocks[0];
+            Assert.True(p0.HasMixedFormatting);
+            Assert.Contains(p0.Runs, r => r.IsBold && r.Text == "bold");
+            Assert.Contains(p0.Runs, r => r.IsItalic && r.Text == "italic");
+            Assert.Contains(p0.Runs, r => r.IsUnderline && r.HyperlinkUri == "https://example.com/docs" && r.Text == "portal");
+
+            // Edit trailing character of paragraph 0 via diff so bold/italic/hyperlink runs survive
+            p0.Text = p0.Text[..^1] + "!";
+            // Also sub-select "Hello" (0..5) and toggle underline via VM selection API
+            p0.SelectionStart = 0;
+            p0.SelectionLength = 5;
+            vm.SelectBlockCommand.Execute(p0);
+            vm.ToggleUnderlineCommand.Execute(null);
+
+            // Modify only cell (0,1) in table, leave cell (0,0) and drawing paragraph untouched
+            vm.Blocks[2].TableRows[0].Cells[1].Text = "NewValue";
+
+            await vm.SaveAsync(docxPath, ct);
+
+            using (var check = WordprocessingDocument.Open(docxPath, false))
+            {
+                var body = check.MainDocumentPart!.Document!.Body!;
+                var paragraphs = body.Elements<Paragraph>().ToList();
+                Assert.Equal(2, paragraphs.Count);
+
+                // Unmodified drawing paragraph keeps <w:drawing> and center justification
+                var savedDrawingPara = paragraphs[1];
+                Assert.Single(savedDrawingPara.Descendants<DocumentFormat.OpenXml.Wordprocessing.Drawing>());
+                Assert.Equal(JustificationValues.Center, savedDrawingPara.ParagraphProperties?.Justification?.Val?.Value);
+
+                // Mixed paragraph keeps hyperlink, bold, italic, and new sub-range underline
+                var savedMixed = paragraphs[0];
+                var savedHyperlinks = savedMixed.Elements<DocumentFormat.OpenXml.Wordprocessing.Hyperlink>().ToList();
+                Assert.Single(savedHyperlinks);
+                string linkId = savedHyperlinks[0].Id!.Value!;
+                var rel = check.MainDocumentPart.HyperlinkRelationships.First(r => r.Id == linkId);
+                Assert.Equal("https://example.com/docs", rel.Uri.AbsoluteUri);
+
+                var reloaded = await RichDocService.LoadAsync(docxPath, ct);
+                Assert.Contains(reloaded.Blocks[0].Runs, r => r.IsUnderline && r.Text == "Hello");
+                Assert.Contains(reloaded.Blocks[0].Runs, r => r.IsBold && r.Text == "bold");
+                Assert.Contains(reloaded.Blocks[0].Runs, r => r.IsItalic && r.Text == "italic");
+                Assert.EndsWith("!", reloaded.Blocks[0].Text);
+
+                // Table keeps tblPr, untouched cell (0,0) shading & bold, and edited cell (0,1) shading
+                var savedTable = body.Elements<DocumentFormat.OpenXml.Wordprocessing.Table>().Single();
+                Assert.Equal("5000", savedTable.GetFirstChild<TableProperties>()?.TableWidth?.Width?.Value);
+                var savedRow = savedTable.Elements<TableRow>().Single();
+                var savedCells = savedRow.Elements<TableCell>().ToList();
+                Assert.Equal("E2E8F0", savedCells[0].TableCellProperties?.Shading?.Fill?.Value);
+                Assert.NotNull(savedCells[0].Descendants<DocumentFormat.OpenXml.Wordprocessing.Bold>().FirstOrDefault());
+                Assert.Equal("F8FAFC", savedCells[1].TableCellProperties?.Shading?.Fill?.Value);
+                Assert.Equal("NewValue", reloaded.Blocks[2].TableRows[0][1]);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Spreadsheet_FormulasStylesDatesColumnWidths_AndCalculationChain_PreservedAndUpdatedOnSave()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        string tempDir = Path.Combine(Path.GetTempPath(), $"PdfStudioXlsxPreserve_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        string xlsxPath = Path.Combine(tempDir, "financial.xlsx");
+
+        try
+        {
+            using (var doc = SpreadsheetDocument.Create(xlsxPath, SpreadsheetDocumentType.Workbook))
+            {
+                var wbPart = doc.AddWorkbookPart();
+                wbPart.Workbook = new Workbook();
+
+                var stylesPart = wbPart.AddNewPart<WorkbookStylesPart>();
+                stylesPart.Stylesheet = new Stylesheet(
+                    new NumberingFormats(
+                        new DocumentFormat.OpenXml.Spreadsheet.NumberingFormat { NumberFormatId = 164, FormatCode = "$#,##0.00" }) { Count = 1 },
+                    new DocumentFormat.OpenXml.Spreadsheet.Fonts(new DocumentFormat.OpenXml.Spreadsheet.Font()) { Count = 1 },
+                    new Fills(new Fill(new PatternFill { PatternType = PatternValues.None })) { Count = 1 },
+                    new Borders(new DocumentFormat.OpenXml.Spreadsheet.Border()) { Count = 1 },
+                    new CellFormats(
+                        new CellFormat { NumberFormatId = 0 },
+                        new CellFormat { NumberFormatId = 164, ApplyNumberFormat = true },
+                        new CellFormat { NumberFormatId = 14, ApplyNumberFormat = true }) { Count = 3 });
+                stylesPart.Stylesheet.Save();
+
+                var wsPart = wbPart.AddNewPart<WorksheetPart>();
+                wsPart.Worksheet = new Worksheet(
+                    new DocumentFormat.OpenXml.Spreadsheet.Columns(
+                        new DocumentFormat.OpenXml.Spreadsheet.Column { Min = 1, Max = 1, Width = 24.0, CustomWidth = true },
+                        new DocumentFormat.OpenXml.Spreadsheet.Column { Min = 2, Max = 2, Width = 18.5, CustomWidth = true }),
+                    new SheetData(
+                        new Row(
+                            new Cell { CellReference = "A1", DataType = CellValues.InlineString, InlineString = new InlineString(new DocumentFormat.OpenXml.Spreadsheet.Text("Date")) },
+                            new Cell { CellReference = "B1", DataType = CellValues.InlineString, InlineString = new InlineString(new DocumentFormat.OpenXml.Spreadsheet.Text("Amount")) },
+                            new Cell { CellReference = "C1", DataType = CellValues.InlineString, InlineString = new InlineString(new DocumentFormat.OpenXml.Spreadsheet.Text("Double")) },
+                            new Cell { CellReference = "D1", DataType = CellValues.InlineString, InlineString = new InlineString(new DocumentFormat.OpenXml.Spreadsheet.Text("Sum")) })
+                        { RowIndex = 1 },
+                        new Row(
+                            new Cell { CellReference = "A2", StyleIndex = 2, CellValue = new CellValue("45292") },
+                            new Cell { CellReference = "B2", StyleIndex = 1, DataType = CellValues.Number, CellValue = new CellValue("100") },
+                            new Cell { CellReference = "C2", StyleIndex = 1, CellFormula = new CellFormula("B2*2"), CellValue = new CellValue("200") },
+                            new Cell { CellReference = "D2", StyleIndex = 1, CellFormula = new CellFormula("SUM(B2:B3)"), CellValue = new CellValue("350") })
+                        { RowIndex = 2 },
+                        new Row(
+                            new Cell { CellReference = "A3", StyleIndex = 2, CellValue = new CellValue("45293") },
+                            new Cell { CellReference = "B3", StyleIndex = 1, DataType = CellValues.Number, CellValue = new CellValue("250") })
+                        { RowIndex = 3 }));
+                wsPart.Worksheet.Save();
+
+                var calcPart = wbPart.AddNewPart<CalculationChainPart>();
+                calcPart.CalculationChain = new CalculationChain(
+                    new CalculationCell { CellReference = "C2", SheetId = 1 },
+                    new CalculationCell { CellReference = "D2", SheetId = 1 });
+                calcPart.CalculationChain.Save();
+
+                var sheets = wbPart.Workbook.AppendChild(new Sheets());
+                sheets.Append(new Sheet { Id = wbPart.GetIdOfPart(wsPart), SheetId = 1, Name = "Ledger" });
+                wbPart.Workbook.Save();
+            }
+
+            // 1. Load & verify serial dates formatted cleanly and column widths preserved
+            var vm = new SpreadsheetWorkspaceViewModel(xlsxPath);
+            await vm.LoadAsync(ct);
+
+            Assert.Equal("2024-01-01", vm.ActiveSheet!.Rows[1][0]);
+            Assert.Equal("2024-01-02", vm.ActiveSheet.Rows[2][0]);
+            Assert.Equal(2, vm.ActiveSheet.ColumnWidths.Count);
+            Assert.Equal(24.0, vm.ActiveSheet.ColumnWidths[0].Width, 2);
+
+            // 2. Edit non-formula cell B3, save, verify formulas, styles, serial dates, cols & calcChain preserved
+            vm.ActiveSheet.Rows[2][1] = "300";
+            await vm.SaveAsync(xlsxPath, ct);
+
+            using (var check1 = SpreadsheetDocument.Open(xlsxPath, false))
+            {
+                var wbPart = check1.WorkbookPart!;
+                Assert.NotNull(wbPart.CalculationChainPart);
+
+                var ws = wbPart.WorksheetParts.First().Worksheet!;
+                var cols = ws.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.Columns>()!
+                    .Elements<DocumentFormat.OpenXml.Spreadsheet.Column>().ToList();
+                Assert.Equal(24.0, cols[0].Width!.Value, 2);
+                Assert.Equal(18.5, cols[1].Width!.Value, 2);
+
+                var cells = ws.Descendants<Cell>().ToDictionary(c => c.CellReference!.Value!);
+                Assert.Equal("45292", cells["A2"].CellValue!.Text);
+                Assert.Equal(2u, cells["A2"].StyleIndex!.Value);
+                Assert.Equal("300", cells["B3"].CellValue!.Text);
+                Assert.Equal(1u, cells["B3"].StyleIndex!.Value);
+                Assert.Equal("B2*2", cells["C2"].CellFormula?.Text);
+                Assert.Equal(1u, cells["C2"].StyleIndex!.Value);
+                Assert.Equal("SUM(B2:B3)", cells["D2"].CellFormula?.Text);
+            }
+
+            // 3. Edit/overwrite formula cell C2 -> CalculationChainPart must be removed while D2 keeps formula
+            vm.ActiveSheet!.Rows[1][2] = "999";
+            await vm.SaveAsync(xlsxPath, ct);
+
+            using (var check2 = SpreadsheetDocument.Open(xlsxPath, false))
+            {
+                var wbPart = check2.WorkbookPart!;
+                Assert.Null(wbPart.CalculationChainPart);
+                Assert.True(wbPart.Workbook!.CalculationProperties?.FullCalculationOnLoad?.Value == true);
+
+                var cells = wbPart.WorksheetParts.First().Worksheet!.Descendants<Cell>()
+                    .ToDictionary(c => c.CellReference!.Value!);
+                Assert.Null(cells["C2"].CellFormula);
+                Assert.Equal("999", cells["C2"].CellValue!.Text);
+                Assert.Equal(1u, cells["C2"].StyleIndex!.Value);
+                Assert.Equal("SUM(B2:B3)", cells["D2"].CellFormula?.Text);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RichDoc_FindAndReplace_ReplacesSingleAndAll_WithUndoRedo()
+    {
+        var model = new RichDocModel();
+        model.Blocks.Add(new RichDocBlock
+        {
+            Kind = RichDocBlockKind.Paragraph,
+            Text = "alpha one alpha two"
+        });
+        model.Blocks.Add(new RichDocBlock
+        {
+            Kind = RichDocBlockKind.Paragraph,
+            Text = "unchanged paragraph"
+        });
+        var table = new RichDocBlock { Kind = RichDocBlockKind.Table };
+        table.TableRows.Add(["ALPHA cell", "other"]);
+        model.Blocks.Add(table);
+
+        var vm = new RichDocWorkspaceViewModel("sample.docx");
+        vm.LoadFromModel(model);
+
+        vm.FindQuery = "alpha";
+        Assert.Equal(2, vm.SearchMatches.Count);
+        Assert.Equal("1 of 2", vm.SearchStatusLabel);
+
+        vm.ReplaceText = "omega";
+        vm.ReplaceCurrentMatch();
+
+        Assert.Equal("omega one alpha two", vm.Blocks[0].Text);
+        Assert.Equal("ALPHA cell", vm.Blocks[2].TableRows[0].Cells[0].Text);
+        Assert.True(vm.IsDirty);
+        Assert.True(vm.CanUndo);
+        Assert.Equal("1 of 2", vm.SearchStatusLabel);
+
+        int replaced = vm.ReplaceAllMatches();
+        Assert.Equal(2, replaced);
+        Assert.Equal("omega one omega two", vm.Blocks[0].Text);
+        Assert.Equal("omega cell", vm.Blocks[2].TableRows[0].Cells[0].Text);
+        Assert.Equal("0 of 0", vm.SearchStatusLabel);
+
+        vm.Undo();
+        Assert.Equal("omega one alpha two", vm.Blocks[0].Text);
+        Assert.Equal("ALPHA cell", vm.Blocks[2].TableRows[0].Cells[0].Text);
+
+        vm.Undo();
+        Assert.Equal("alpha one alpha two", vm.Blocks[0].Text);
+        Assert.False(vm.IsDirty);
+
+        vm.Redo();
+        vm.Redo();
+        Assert.Equal("omega one omega two", vm.Blocks[0].Text);
+        Assert.Equal("omega cell", vm.Blocks[2].TableRows[0].Cells[0].Text);
+    }
+
+    [Fact]
+    public void Spreadsheet_FindAndReplace_ReplacesSingleAndAll_AcrossSheets_WithUndoRedo()
+    {
+        var wb = new SpreadsheetWorkbookData();
+        wb.Sheets.Add(new SpreadsheetSheetData
+        {
+            Name = "Q1",
+            Rows =
+            {
+                new List<string> { "Tax", "100" },
+                new List<string> { "Subtotal Tax", "Tax" }
+            }
+        });
+        wb.Sheets.Add(new SpreadsheetSheetData
+        {
+            Name = "Q2",
+            Rows =
+            {
+                new List<string> { "tax Credit", "50" }
+            }
+        });
+
+        var vm = new SpreadsheetWorkspaceViewModel("book.xlsx");
+        vm.LoadFromWorkbook(wb);
+
+        vm.FindQuery = "tax";
+        Assert.Equal(4, vm.SearchMatches.Count);
+        Assert.Equal("1 of 4", vm.SearchStatusLabel);
+
+        vm.NextSearchMatch();
+        vm.ReplaceText = "Duty";
+        vm.ReplaceCurrentMatch();
+
+        Assert.Equal("Subtotal Duty", vm.Sheets[0].Rows[1][0]);
+        Assert.Equal(3, vm.SearchMatches.Count);
+        Assert.Equal("1 of 3", vm.SearchStatusLabel);
+        Assert.True(vm.IsDirty);
+
+        int replaced = vm.ReplaceAllMatches();
+        Assert.Equal(3, replaced);
+        Assert.Equal("Duty", vm.Sheets[0].Rows[0][0]);
+        Assert.Equal("Duty", vm.Sheets[0].Rows[1][1]);
+        Assert.Equal("Duty Credit", vm.Sheets[1].Rows[0][0]);
+        Assert.Equal("0 of 0", vm.SearchStatusLabel);
+
+        vm.Undo();
+        Assert.Equal("Tax", vm.Sheets[0].Rows[0][0]);
+        Assert.Equal("Subtotal Duty", vm.Sheets[0].Rows[1][0]);
+
+        vm.Undo();
+        Assert.Equal("Subtotal Tax", vm.Sheets[0].Rows[1][0]);
+        Assert.False(vm.IsDirty);
+
+        vm.Redo();
+        vm.Redo();
+        Assert.Equal("Duty Credit", vm.Sheets[1].Rows[0][0]);
+    }
 }
