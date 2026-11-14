@@ -12,12 +12,14 @@ internal sealed class PdfiumWorker : IDisposable
     private readonly PriorityQueue<WorkItem, int> _queue = new();
     private readonly SemaphoreSlim _signal = new(0);
     private readonly Thread _thread;
+    private readonly Action? _onWorkerExit;
     private bool _disposed;
 
-    private sealed record WorkItem(Action Run, CancellationToken CancellationToken);
+    private sealed record WorkItem(Action Run, Action Cancel, CancellationToken CancellationToken);
 
-    public PdfiumWorker()
+    public PdfiumWorker(Action? onWorkerExit = null)
     {
+        _onWorkerExit = onWorkerExit;
         _thread = new Thread(RunLoop)
         {
             Name = "Pdfium-Render-Worker",
@@ -67,31 +69,55 @@ internal sealed class PdfiumWorker : IDisposable
                 {
                     tcs.TrySetException(ex);
                 }
+            }, () =>
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    tcs.TrySetCanceled(ct);
+                }
+                else
+                {
+                    tcs.TrySetCanceled();
+                }
             }, ct), (int)priority);
+            _signal.Release();
         }
 
-        _signal.Release();
         return tcs.Task;
     }
 
     private void RunLoop()
     {
-        while (true)
+        try
         {
-            _signal.Wait();
-
-            WorkItem? item;
-            lock (_gate)
+            while (true)
             {
-                if (_disposed && _queue.Count == 0)
+                _signal.Wait();
+
+                WorkItem? item;
+                lock (_gate)
                 {
-                    return;
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
+                    _queue.TryDequeue(out item, out _);
                 }
 
-                _queue.TryDequeue(out item, out _);
+                item?.Run();
             }
-
-            item?.Run();
+        }
+        finally
+        {
+            try
+            {
+                _onWorkerExit?.Invoke();
+            }
+            catch
+            {
+                // Best-effort native cleanup on worker thread exit.
+            }
         }
     }
 
@@ -106,6 +132,11 @@ internal sealed class PdfiumWorker : IDisposable
             {
                 remaining.Add(item);
             }
+        }
+
+        foreach (var item in remaining)
+        {
+            item.Cancel();
         }
 
         _signal.Release();

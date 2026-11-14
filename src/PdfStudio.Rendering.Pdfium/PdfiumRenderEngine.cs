@@ -15,7 +15,7 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
     private static int _libraryRefCount;
     private static readonly Lock LibraryGate = new();
 
-    private readonly PdfiumWorker _worker = new();
+    private readonly PdfiumWorker _worker;
     private SafePdfDocumentHandle? _documentHandle;
     private nint _pinnedBuffer;
     private int _pinnedLength;
@@ -27,6 +27,7 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
 
     public PdfiumRenderEngine()
     {
+        _worker = new PdfiumWorker(CloseCore);
         lock (LibraryGate)
         {
             if (_libraryRefCount == 0)
@@ -37,11 +38,63 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
         }
     }
 
-    public async Task<IReadOnlyList<PdfPageInfo>> OpenAsync(string filePath, string? password = null, CancellationToken ct = default)
+    public Task<IReadOnlyList<PdfPageInfo>> OpenAsync(string filePath, string? password = null, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        byte[] bytes = await File.ReadAllBytesAsync(filePath, ct).ConfigureAwait(false);
-        return await OpenBytesAsync(bytes, password, ct).ConfigureAwait(false);
+
+        return _worker.EnqueueAsync<IReadOnlyList<PdfPageInfo>>(() =>
+        {
+            CloseCore();
+
+            using var fs = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite,
+                bufferSize: 65536,
+                FileOptions.SequentialScan);
+
+            long length = fs.Length;
+            if (length <= 0)
+            {
+                throw new InvalidDataException("PDF file is empty.");
+            }
+            if (length > int.MaxValue)
+            {
+                throw new InvalidDataException($"PDF file exceeds maximum supported size of {int.MaxValue} bytes.");
+            }
+
+            unsafe
+            {
+                _pinnedLength = (int)length;
+                _pinnedBuffer = (nint)NativeMemory.Alloc((nuint)_pinnedLength);
+                try
+                {
+                    const int chunkSize = 256 * 1024;
+                    var dest = new Span<byte>((void*)_pinnedBuffer, _pinnedLength);
+                    int totalRead = 0;
+                    while (totalRead < _pinnedLength)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        int toRead = Math.Min(chunkSize, _pinnedLength - totalRead);
+                        int read = fs.Read(dest.Slice(totalRead, toRead));
+                        if (read == 0)
+                        {
+                            throw new EndOfStreamException("Unexpected end of PDF file stream while loading into native memory.");
+                        }
+                        totalRead += read;
+                    }
+                }
+                catch
+                {
+                    FreePinnedBuffer();
+                    throw;
+                }
+            }
+
+            return LoadDocumentFromPinnedBuffer(password);
+        }, RenderPriority.VisibleViewport, ct);
     }
 
     public Task<IReadOnlyList<PdfPageInfo>> OpenBytesAsync(ReadOnlyMemory<byte> pdfBytes, string? password = null, CancellationToken ct = default)
@@ -64,26 +117,31 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
                 pdfBytes.Span.CopyTo(new Span<byte>((void*)_pinnedBuffer, _pinnedLength));
             }
 
-            nint rawDoc = PdfiumNative.FPDF_LoadMemDocument(_pinnedBuffer, _pinnedLength, password);
-            if (rawDoc == 0)
-            {
-                uint err = PdfiumNative.FPDF_GetLastError();
-                FreePinnedBuffer();
-                throw new InvalidOperationException($"PDFium failed to load document (error code {err}).");
-            }
-
-            _documentHandle = new SafePdfDocumentHandle(rawDoc);
-            _pageCount = PdfiumNative.FPDF_GetPageCount(rawDoc);
-
-            var pages = new List<PdfPageInfo>(_pageCount);
-            for (int i = 0; i < _pageCount; i++)
-            {
-                PdfiumNative.FPDF_GetPageSizeByIndexF(rawDoc, i, out var size);
-                pages.Add(new PdfPageInfo(i, size.Width, size.Height));
-            }
-
-            return pages;
+            return LoadDocumentFromPinnedBuffer(password);
         }, RenderPriority.VisibleViewport, ct);
+    }
+
+    private IReadOnlyList<PdfPageInfo> LoadDocumentFromPinnedBuffer(string? password)
+    {
+        nint rawDoc = PdfiumNative.FPDF_LoadMemDocument(_pinnedBuffer, _pinnedLength, password);
+        if (rawDoc == 0)
+        {
+            uint err = PdfiumNative.FPDF_GetLastError();
+            FreePinnedBuffer();
+            throw new InvalidOperationException($"PDFium failed to load document (error code {err}).");
+        }
+
+        _documentHandle = new SafePdfDocumentHandle(rawDoc);
+        _pageCount = PdfiumNative.FPDF_GetPageCount(rawDoc);
+
+        var pages = new List<PdfPageInfo>(_pageCount);
+        for (int i = 0; i < _pageCount; i++)
+        {
+            PdfiumNative.FPDF_GetPageSizeByIndexF(rawDoc, i, out var size);
+            pages.Add(new PdfPageInfo(i, size.Width, size.Height));
+        }
+
+        return pages;
     }
 
     public Task CloseAsync()
@@ -464,10 +522,9 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        await CloseAsync().ConfigureAwait(false);
+        if (_disposed) return ValueTask.CompletedTask;
         _disposed = true;
         _worker.Dispose();
 
@@ -479,6 +536,8 @@ public sealed class PdfiumRenderEngine : IPdfRenderEngine
                 PdfiumNative.FPDF_DestroyLibrary();
             }
         }
+
+        return ValueTask.CompletedTask;
     }
 }
 

@@ -11,6 +11,7 @@ using PdfStudio.App.Themes;
 using PdfStudio.App.ViewModels;
 using PdfStudio.App.Views;
 using PdfStudio.Rendering.Pdfium;
+using SkiaSharp;
 using Xunit;
 
 namespace PdfStudio.Tests;
@@ -206,5 +207,84 @@ public sealed class MainWindowHeadlessTests
 
         Assert.True(window.TryFindResource("AccentBrush", variant, out var accentRes));
         Assert.Equal(Color.Parse(preset.AccentHex), Assert.IsType<SolidColorBrush>(accentRes).Color);
+    }
+
+    [AvaloniaFact]
+    public async Task PdfDarkModeInversion_TogglesPerTab_AndTransformsCanvasColors()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"PdfStudioDarkInvertTest_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        var settingsPath = Path.Combine(tempDir, "settings.json");
+
+        try
+        {
+            static void WriteBlankPdf(string path)
+            {
+                using var doc = new PdfDocument();
+                var p = doc.AddPage();
+                p.Width = 612;
+                p.Height = 792;
+                doc.Save(path);
+            }
+
+            string pdfA = Path.Combine(tempDir, "docA.pdf");
+            string pdfB = Path.Combine(tempDir, "docB.pdf");
+            WriteBlankPdf(pdfA);
+            WriteBlankPdf(pdfB);
+
+            await using var engine = new PdfiumRenderEngine();
+            var vm = new MainWindowViewModel(engine, settingsFilePath: settingsPath);
+            var window = new MainWindow
+            {
+                DataContext = vm,
+                Width = 1280,
+                Height = 820
+            };
+            window.Show();
+
+            await vm.LoadFileAsync(pdfA);
+            var tabA = Assert.IsType<PdfWorkspaceViewModel>(vm.ActiveTab);
+            await vm.LoadFileAsync(pdfB);
+            var tabB = Assert.IsType<PdfWorkspaceViewModel>(vm.ActiveTab);
+            window.UpdateLayout();
+
+            var invertButton = window.FindControl<Button>("PdfDarkInvertButton");
+            Assert.NotNull(invertButton);
+            Assert.False(vm.IsPdfDarkInvertEnabled);
+            Assert.DoesNotContain("active", invertButton.Classes);
+
+            invertButton.Command!.Execute(null);
+            Assert.True(vm.IsPdfDarkInvertEnabled);
+            Assert.True(tabB.IsDarkInvertEnabled);
+            Assert.False(tabA.IsDarkInvertEnabled);
+            Assert.Contains("active", invertButton.Classes);
+
+            await vm.SwitchTabCommand.ExecuteAsync(tabA);
+            Assert.False(vm.IsPdfDarkInvertEnabled);
+            Assert.DoesNotContain("active", invertButton.Classes);
+
+            await vm.SwitchTabCommand.ExecuteAsync(tabB);
+            Assert.True(vm.IsPdfDarkInvertEnabled);
+            Assert.Contains("active", invertButton.Classes);
+
+            var invertedWhite = PdfCanvasControl.TransformColorForDarkInvert(SKColors.White);
+            Assert.InRange(invertedWhite.Red, (byte)15, (byte)45);
+            Assert.InRange(invertedWhite.Green, (byte)15, (byte)45);
+            Assert.InRange(invertedWhite.Blue, (byte)20, (byte)55);
+
+            var invertedBlack = PdfCanvasControl.TransformColorForDarkInvert(SKColors.Black);
+            Assert.InRange(invertedBlack.Red, (byte)220, (byte)255);
+            Assert.InRange(invertedBlack.Green, (byte)215, (byte)255);
+            Assert.InRange(invertedBlack.Blue, (byte)210, (byte)255);
+
+            window.Close();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
     }
 }

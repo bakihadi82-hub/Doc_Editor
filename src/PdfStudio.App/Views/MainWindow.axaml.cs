@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using PdfStudio.App.Services;
 using PdfStudio.App.ViewModels;
 using PdfStudio.Core.Formats;
 using PdfStudio.Core.Forms;
@@ -60,6 +61,8 @@ public partial class MainWindow : Window
             vm.RequestFocusPageJumpBox += FocusPageJumpBox;
             vm.RequestCopyToClipboard += CopyTextToClipboardAsync;
             vm.RequestTabCrossfade += TriggerTabCrossfade;
+            vm.RequestUpdateThumbnailViewport += () =>
+                Dispatcher.UIThread.Post(UpdateVisibleThumbnailsInViewport, DispatcherPriority.Background);
             vm.RequestFocusInlinePdfTextEdit += FocusInlinePdfTextEditBox;
             vm.RequestFocusTabSearchBox += FocusTabSearchInput;
             vm.OpenTabs.CollectionChanged += (_, _) =>
@@ -585,6 +588,64 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ThumbnailScrollViewer_OnScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        UpdateVisibleThumbnailsInViewport();
+    }
+
+    private void ThumbnailScrollViewer_OnSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        UpdateVisibleThumbnailsInViewport();
+    }
+
+    private void UpdateVisibleThumbnailsInViewport()
+    {
+        if (DataContext is not MainWindowViewModel vm ||
+            !vm.HasOpenDocument ||
+            !vm.IsPagesTabActive ||
+            vm.PageThumbnails.Count == 0)
+        {
+            return;
+        }
+
+        double viewportH = ThumbnailScrollViewer.Viewport.Height;
+        if (viewportH <= 0) return;
+
+        int firstVisible = -1;
+        int lastVisible = -1;
+        var itemsOrigin = ThumbnailItemsControl.TranslatePoint(new Point(0, 0), ThumbnailScrollViewer);
+        if (itemsOrigin is { } origin)
+        {
+            for (int i = 0; i < vm.PageThumbnails.Count; i++)
+            {
+                var container = ThumbnailItemsControl.ContainerFromIndex(i);
+                if (container is null || container.Bounds.Height <= 0) continue;
+
+                double top = origin.Y + container.Bounds.Top;
+                double bottom = origin.Y + container.Bounds.Bottom;
+                if (bottom >= 0 && top <= viewportH)
+                {
+                    if (firstVisible < 0) firstVisible = i;
+                    lastVisible = i;
+                }
+                else if (firstVisible >= 0 && top > viewportH)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (firstVisible < 0)
+        {
+            const double estimatedItemHeight = 168.0;
+            double offsetY = Math.Max(0, ThumbnailScrollViewer.Offset.Y);
+            firstVisible = Math.Clamp((int)Math.Floor(offsetY / estimatedItemHeight), 0, vm.PageThumbnails.Count - 1);
+            lastVisible = Math.Clamp((int)Math.Floor((offsetY + viewportH) / estimatedItemHeight), firstVisible, vm.PageThumbnails.Count - 1);
+        }
+
+        vm.UpdateThumbnailViewport(firstVisible, lastVisible);
+    }
+
     // --- File Pickers & Drag-Drop ---
 
     private async Task<string?> PickSupportedFileAsync()
@@ -689,17 +750,30 @@ public partial class MainWindow : Window
 
     private async void OnFileDrop(object? sender, DragEventArgs e)
     {
-        if (DataContext is not MainWindowViewModel vm) return;
-        var files = e.DataTransfer.TryGetFiles();
-        if (files is null) return;
-
-        foreach (var file in files)
+        var vm = DataContext as MainWindowViewModel;
+        try
         {
-            string? path = file.TryGetLocalPath();
-            if (!string.IsNullOrWhiteSpace(path) && DocumentFormatHelper.IsSupportedFile(path))
+            if (vm is null) return;
+            var files = e.DataTransfer.TryGetFiles();
+            if (files is null) return;
+
+            foreach (var file in files)
             {
-                e.Handled = true;
-                await vm.LoadFileAsync(path);
+                string? path = file.TryGetLocalPath();
+                if (!string.IsNullOrWhiteSpace(path) && DocumentFormatHelper.IsSupportedFile(path))
+                {
+                    e.Handled = true;
+                    await vm.LoadFileAsync(path);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            CrashLogger.LogException(ex, "MainWindow.OnFileDrop");
+            if (vm is not null)
+            {
+                vm.StatusMessage = $"Could not open dropped file: {ex.Message}";
+                vm.ShowErrorDialog($"Could not open dropped file:\n{ex.Message}");
             }
         }
     }

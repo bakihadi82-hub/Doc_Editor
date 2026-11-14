@@ -166,6 +166,7 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(IsMarkdownWorkspaceActive));
         OnPropertyChanged(nameof(IsImageWorkspaceActive));
         OnPropertyChanged(nameof(IsPdfOrImageWorkspaceActive));
+        OnPropertyChanged(nameof(IsPdfDarkInvertEnabled));
         OnPropertyChanged(nameof(CanExportPdf));
         OnPropertyChanged(nameof(ContextBarStatusText));
         NotifyUndoRedoChanged();
@@ -556,8 +557,8 @@ public sealed partial class MainWindowViewModel
             ClearSearchState();
             ClearPdfTextSelection();
             CancelInlinePdfTextEdit();
-            CancelThumbnails();
-            DisposeThumbnails();
+            Thumbnails.Cancel();
+            Thumbnails.DisposeAll();
             Pages.Clear();
             OutlineNodes.Clear();
             FormFields.Clear();

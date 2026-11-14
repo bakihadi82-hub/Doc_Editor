@@ -4,10 +4,50 @@
              x:Class="PdfStudio.App.Views.Editors.SpreadsheetEditorView"
              x:DataType="vm:SpreadsheetWorkspaceViewModel"
              Background="{DynamicResource CanvasBackgroundBrush}">
-  <Grid RowDefinitions="*,36">
+  <Grid RowDefinitions="40,*,36">
+    <!-- Quick Find & Replace Toolbar -->
+    <Border Grid.Row="0"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="{DynamicResource HairlineBorderBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="14,0">
+      <StackPanel Orientation="Horizontal"
+                  Spacing="6"
+                  VerticalAlignment="Center">
+        <TextBox x:Name="FindBox"
+                 Text="{Binding FindQuery, Mode=TwoWay}"
+                 Width="160"
+                 Height="26"
+                 FontSize="11.5"
+                 PlaceholderText="Find in workbook…"
+                 KeyDown="OnFindBoxKeyDown" />
+        <TextBox Text="{Binding ReplaceText, Mode=TwoWay}"
+                 Width="145"
+                 Height="26"
+                 FontSize="11.5"
+                 PlaceholderText="Replace with…" />
+        <Button Content="Replace"
+                Classes="linear-ghost"
+                Height="26"
+                Padding="8,0"
+                FontSize="11.5"
+                Click="OnReplaceClick" />
+        <Button Content="All"
+                Classes="linear-ghost"
+                Height="26"
+                Padding="8,0"
+                FontSize="11.5"
+                Click="OnReplaceAllClick" />
+        <TextBlock Text="{Binding SearchStatusLabel}"
+                   FontSize="11"
+                   Foreground="{DynamicResource TextSecondaryBrush}"
+                   VerticalAlignment="Center" />
+      </StackPanel>
+    </Border>
+
     <!-- Virtualized high-speed DataGrid -->
     <DataGrid x:Name="SheetGrid"
-              Grid.Row="0"
+              Grid.Row="1"
               ItemsSource="{Binding ActiveSheet.Rows}"
               SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
               AutoGenerateColumns="False"
@@ -26,7 +66,7 @@
               FontSize="12.5" />
 
     <!-- Bottom Worksheet Strip -->
-    <Border Grid.Row="1"
+    <Border Grid.Row="2"
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource HairlineBorderBrush}"
             BorderThickness="0,1,0,0"

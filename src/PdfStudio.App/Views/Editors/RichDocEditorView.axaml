@@ -4,14 +4,18 @@
              x:Class="PdfStudio.App.Views.Editors.RichDocEditorView"
              x:DataType="vm:RichDocWorkspaceViewModel"
              Background="{DynamicResource CanvasBackgroundBrush}">
-  <Grid RowDefinitions="42,*">
-    <!-- Contextual Formatting Bar -->
+  <Grid RowDefinitions="42,Auto,*">
+    <!-- Contextual Formatting + Quick Find & Replace Bar -->
     <Border Grid.Row="0"
             Background="{DynamicResource PanelBackgroundBrush}"
             BorderBrush="{DynamicResource HairlineBorderBrush}"
             BorderThickness="0,0,0,1"
             Padding="14,0">
-      <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+        <ScrollViewer Grid.Column="0"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Disabled">
+          <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
         <Button Command="{Binding CycleHeadingCommand}"
                 Classes="linear-ghost"
                 Classes.active="{Binding IsHeadingActive}"
@@ -111,11 +115,73 @@
                 Padding="8,0">
           <TextBlock Text="Remove" FontSize="11.5" Foreground="{DynamicResource TextSecondaryBrush}" />
         </Button>
-      </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- Quick Find & Replace Bar -->
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="6"
+                    VerticalAlignment="Center">
+          <TextBox x:Name="FindBox"
+                   Text="{Binding FindQuery, Mode=TwoWay}"
+                   Width="135"
+                   Height="26"
+                   FontSize="11.5"
+                   PlaceholderText="Find in doc…"
+                   KeyDown="OnFindBoxKeyDown" />
+          <TextBox Text="{Binding ReplaceText, Mode=TwoWay}"
+                   Width="125"
+                   Height="26"
+                   FontSize="11.5"
+                   PlaceholderText="Replace with…" />
+          <Button Content="Replace"
+                  Classes="linear-ghost"
+                  Height="26"
+                  Padding="8,0"
+                  FontSize="11.5"
+                  Click="OnReplaceClick" />
+          <Button Content="All"
+                  Classes="linear-ghost"
+                  Height="26"
+                  Padding="8,0"
+                  FontSize="11.5"
+                  Click="OnReplaceAllClick" />
+          <TextBlock Text="{Binding SearchStatusLabel}"
+                     FontSize="11"
+                     Foreground="{DynamicResource TextSecondaryBrush}"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Complex / Embedded Word Elements Notice Banner -->
+    <Border Grid.Row="1"
+            IsVisible="{Binding HasUnsupportedElementsWarning}"
+            Background="{DynamicResource PanelBackgroundBrush}"
+            BorderBrush="#D97706"
+            BorderThickness="0,0,0,1"
+            Padding="14,8">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Grid.Column="0"
+                   Text="{Binding UnsupportedElementsWarning}"
+                   FontSize="12"
+                   Foreground="{DynamicResource TextPrimaryBrush}"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Center" />
+        <Button Grid.Column="1"
+                Command="{Binding DismissUnsupportedWarningCommand}"
+                Classes="linear-ghost"
+                Height="24"
+                Padding="8,0"
+                ToolTip.Tip="Dismiss notice">
+          <TextBlock Text="Dismiss" FontSize="11.5" />
+        </Button>
+      </Grid>
     </Border>
 
     <!-- Document Paper Canvas -->
-    <ScrollViewer Grid.Row="1"
+    <ScrollViewer Grid.Row="2"
                   HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
                   Padding="24,24,24,84">
@@ -169,7 +235,10 @@
                                AcceptsReturn="True"
                                TextWrapping="Wrap"
                                PlaceholderText="Type here…"
-                               GotFocus="OnBlockControlGotFocus" />
+                               GotFocus="OnBlockControlGotFocus"
+                               LostFocus="OnBlockTextSelectionUpdated"
+                               PointerReleased="OnBlockTextSelectionUpdated"
+                               KeyUp="OnBlockTextSelectionUpdated" />
                       <Border Height="1.5"
                               Background="{DynamicResource TextPrimaryBrush}"
                               Opacity="0.72"
